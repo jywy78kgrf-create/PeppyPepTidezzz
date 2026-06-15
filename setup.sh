@@ -58,7 +58,10 @@ elif [ "$PROFILE" = "gpu" ]; then
     # below uses the env's own pip, not a bare system pip.
     $CONDA create -n $ENV -y --override-channels -c conda-forge python=3.11 pip
   fi
-  $CONDA run -n $ENV python -m pip install --quiet -r requirements-core.txt -r requirements-gpu.txt
+  # Boltz brings its own consistent numpy/scipy/scikit-learn/pandas/rdkit/pyyaml,
+  # so install the GPU reqs STANDALONE -- mixing in requirements-core.txt's pins
+  # (scikit-learn==1.5.1) makes pip resolution impossible against boltz (==1.6.1).
+  $CONDA run -n $ENV python -m pip install --quiet -r requirements-gpu.txt
   # On a CUDA box, ensure a CUDA torch build (boltz pulls torch; override if needed):
   #   $CONDA run -n $ENV python -m pip install --index-url https://download.pytorch.org/whl/cu124 torch
   $CONDA run -n $ENV python -c "import boltz, torch; print('gpu env OK; cuda=', torch.cuda.is_available())"

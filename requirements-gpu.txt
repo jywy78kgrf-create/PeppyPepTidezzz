@@ -1,4 +1,11 @@
-# GPU profile extras (run on a CUDA instance, e.g. RunPod / Lambda).
-# Boltz-2 is the deferred PRIMARY affinity scorer. It pulls in torch; on a GPU
-# instance install a CUDA build of torch (see README) so torch.cuda.is_available().
+# GPU profile (run on a CUDA instance, e.g. RunPod / Lambda).
+# Boltz-2 is the deferred PRIMARY affinity scorer. It is installed STANDALONE,
+# NOT alongside requirements-core.txt: Boltz pins its own consistent scientific
+# stack (numpy<2, scipy==1.13.1, scikit-learn==1.6.1, pandas>=2.2.2,
+# rdkit>=2024.3.2, pyyaml==6.0.2, torch>=2.2), and core's scikit-learn==1.5.1 pin
+# makes pip resolution impossible. The only harness dep Boltz does NOT pull is
+# matplotlib (for the calibration plot), so we add it here.
+# On a GPU box, ensure a CUDA torch build if torch.cuda.is_available() is False
+# (see README): pip install --index-url https://download.pytorch.org/whl/cu124 torch
 boltz==2.2.1
+matplotlib>=3.8
