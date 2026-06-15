@@ -40,7 +40,9 @@ class AutoDock4ZnAffinity(AffinityScorer):
     # ---- one-time target preparation -------------------------------------
     def prepare(self, target: TargetSpec) -> None:
         p = self.params
-        self.workdir = Path(p.get("workdir", tempfile.mkdtemp(prefix="ad4zn_")))
+        # absolute: AutoDock4 runs per-candidate with cwd=candidate dir, so the
+        # parameter_file path baked into each DPF must be absolute to resolve.
+        self.workdir = Path(p.get("workdir", tempfile.mkdtemp(prefix="ad4zn_"))).resolve()
         self.workdir.mkdir(parents=True, exist_ok=True)
         self.ad4zn_dat = target.resolve(p["ad4zn_dat"])          # config-supplied
         self.zinc_pseudo = target.resolve(p["zinc_pseudo_py"])   # config-supplied
@@ -54,7 +56,7 @@ class AutoDock4ZnAffinity(AffinityScorer):
         struct = target.resolve(target.structure_path)
         rec_pdb = self._clean_receptor(struct, metal)
         center = self._metal_xyz(struct, metal)
-        rec_pdbqt = self._receptor_pdbqt(rec_pdb)
+        rec_pdbqt = self._receptor_pdbqt(rec_pdb, metal)
         rec_tz = self._add_tz(rec_pdbqt)
         self.fld = self._run_autogrid(rec_tz, center)
 
@@ -78,10 +80,43 @@ class AutoDock4ZnAffinity(AffinityScorer):
                 return (float(ln[30:38]), float(ln[38:46]), float(ln[46:54]))
         raise ValueError(f"catalytic metal {metal} not found in {pdb}")
 
-    def _receptor_pdbqt(self, rec_pdb) -> Path:
+    def _receptor_pdbqt(self, rec_pdb, metal) -> Path:
+        """Receptor -> rigid PDBQT with polar H + Gasteiger charges.
+
+        Open Babel's Gasteiger model fails ("0 molecules converted") on the
+        metal-containing receptor, so we charge the protein WITHOUT the catalytic
+        metal, then re-attach the metal atom (correctly AutoDock-typed) afterwards.
+        The metal's own charge is irrelevant here: zinc_pseudo.py zeroes it and the
+        TZ pseudo-atoms carry the coordination term (the point of the AD4Zn force-
+        field). Metal selection is config-driven (metal["element"]); no zinc literal.
+        """
+        el = metal["element"]
+        # protein only (drop the catalytic metal so Gasteiger converges)
+        prot_pdb = self.workdir / "protein.pdb"
+        prot_pdb.write_text("\n".join(
+            ln for ln in Path(rec_pdb).read_text().splitlines()
+            if not (ln.startswith(("ATOM", "HETATM")) and ln[12:16].strip() == el)
+        ) + "\nTER\nEND\n")
+        prot_h = self.workdir / "protein_H.pdb"
+        _run(["obabel", str(prot_pdb), "-O", str(prot_h), "-p", "7.4"])  # add polar H
+        prot_pdbqt = self.workdir / "protein.pdbqt"
+        _run(["obabel", str(prot_h), "-xr", "--partialcharge", "gasteiger",
+              "-O", str(prot_pdbqt)])
+
+        # metal atom line(s), AutoDock-typed (Open Babel keeps the metal here since
+        # we do not request Gasteiger on this pass).
+        full_pdbqt = self.workdir / "full.pdbqt"
+        _run(["obabel", str(rec_pdb), "-xr", "-p", "7.4", "-O", str(full_pdbqt)])
+        metal_lines = [ln for ln in Path(full_pdbqt).read_text().splitlines()
+                       if ln.startswith(("ATOM", "HETATM")) and ln[12:16].strip() == el]
+        if not metal_lines:
+            raise ValueError(f"metal {el} not found after receptor PDBQT conversion")
+
         out = self.workdir / "receptor.pdbqt"
-        _run(["obabel", str(rec_pdb), "-xr", "--partialcharge", "gasteiger",
-              "-O", str(out)])
+        body = [ln for ln in Path(prot_pdbqt).read_text().splitlines()
+                if ln.startswith(("ATOM", "HETATM"))]
+        body += metal_lines
+        out.write_text("\n".join(body) + "\nTER\nEND\n")
         return out
 
     def _add_tz(self, rec_pdbqt) -> Path:
@@ -147,12 +182,16 @@ class AutoDock4ZnAffinity(AffinityScorer):
             return AffinityResult(candidate.id, float("nan"), ok=False,
                                   note=f"ligand prep failed: {e}")
 
-        # symlink maps + run AutoDock4 with a FIXED seed (reproducible).
-        for f in self.workdir.glob("receptor_TZ.*.map"):
-            (cdir / f.name).symlink_to(f)
-        for ext in ("e.map", "d.map", "maps.fld"):
-            src = self.workdir / f"receptor_TZ.{ext}"
-            (cdir / src.name).symlink_to(src)
+        # symlink the prepared maps + grid field into the candidate dir, then run
+        # AutoDock4 with a FIXED seed (reproducible). The glob already covers the
+        # atom-type maps AND e.map/d.map, so dedupe via a set (+ the .fld) and link
+        # each source once, idempotently.
+        srcs = set(self.workdir.glob("receptor_TZ.*.map"))
+        srcs.add(self.workdir / "receptor_TZ.maps.fld")
+        for src in srcs:
+            link = cdir / src.name
+            if not link.exists():
+                link.symlink_to(src)
 
         dpf = cdir / "dock.dpf"
         dpf.write_text(
@@ -165,11 +204,13 @@ class AutoDock4ZnAffinity(AffinityScorer):
             + "elecmap receptor_TZ.e.map\n"
             "desolvmap receptor_TZ.d.map\n"
             f"move {lig_pdbqt.name}\n"
-            "search_freq 0.06\n"
+            "ls_search_freq 0.06\n"          # AD4.2 keyword (was the invalid "search_freq")
             f"ga_num_evals {self.ga_evals}\n"
             "ga_pop_size 150\n"
+            # method must be selected BEFORE ga_run: AutoDock4 executes ga_run on parse.
+            "set_ga\nset_sw1\n"
             f"ga_run {self.ga_run}\n"
-            "set_ga\nset_sw1\nanalysis\n"
+            "analysis\n"
         )
         try:
             _run(["autodock4", "-p", "dock.dpf", "-l", "dock.dlg"], cwd=cdir)

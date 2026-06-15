@@ -32,11 +32,21 @@ AD="https://raw.githubusercontent.com/ccsb-scripps/AutoDock-Vina/develop"
 if [ "$PROFILE" = "cpu" ]; then
   ENV=peppy-cpu
   if ! $CONDA env list | grep -q "^$ENV "; then
+    # NB: on conda-forge, `pip` is NOT pulled in by python automatically (unlike
+    # the defaults channel), so list it explicitly -- otherwise `conda run pip`
+    # falls through to the system pip and installs nothing into the env.
     $CONDA create -n $ENV -y --override-channels -c conda-forge -c bioconda \
-      python=3.11 "autodock=4.2.6" "autogrid=4.2.9" "autodock-vina=1.1.2" openbabel
+      python=3.11 pip "autodock=4.2.6" "autogrid=4.2.9" "autodock-vina=1.1.2" openbabel
   fi
-  $CONDA run -n $ENV pip install --quiet -r requirements-core.txt -r requirements-cpu.txt
-  $CONDA run -n $ENV python -c "import rdkit,meeko; print('cpu env OK rdkit',rdkit.__version__)"
+  # use the env's own pip (python -m pip), never a bare `pip` off $PATH
+  $CONDA run -n $ENV python -m pip install --quiet -r requirements-core.txt -r requirements-cpu.txt
+  # meeko 0.5.0 imports `from rdkit.six import StringIO`, removed in rdkit>=2023.09;
+  # it is io.StringIO. Patch in place so mk_prepare_ligand.py (ligand prep) works.
+  SP=$($CONDA run -n $ENV python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
+  if [ -f "$SP/meeko/rdkit_mol_create.py" ]; then
+    sed -i 's/^from rdkit.six import StringIO/from io import StringIO/' "$SP/meeko/rdkit_mol_create.py"
+  fi
+  $CONDA run -n $ENV python -c "import rdkit,meeko; print('cpu env OK rdkit',rdkit.__version__,'meeko',meeko.__version__)"
   $CONDA run -n $ENV autogrid4 --version | head -1
   echo "### CPU ready. Run: $CONDA run -n $ENV python run_calibration.py \\"
   echo "      --config peptidepipe/configs/mmp1_cosmetic/target.yaml --outdir results/mmp1_autodock"
