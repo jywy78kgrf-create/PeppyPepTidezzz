@@ -1,0 +1,13 @@
+parameter_file AD4Zn.dat
+npts 20 20 20
+gridfld receptor_TZ.maps.fld
+spacing 0.375
+receptor_types ZN N TZ HD
+ligand_types C
+receptor receptor_TZ.pdbqt
+gridcenter 0.0 0.0 0.0
+smooth 0.5
+map receptor_TZ.C.map
+elecmap receptor_TZ.e.map
+dsolvmap receptor_TZ.d.map
+dielectric -0.1465
