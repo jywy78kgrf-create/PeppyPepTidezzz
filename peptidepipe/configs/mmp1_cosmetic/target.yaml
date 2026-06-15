@@ -24,7 +24,8 @@ scorer_params:
   spacing: 0.375
   seed: 42                                         # fixed -> reproducible (constraint #1)
   ga_run: 10
-  ga_num_evals: 250000
+  ga_num_evals: 2500000     # AutoDock "medium/thorough" tier (was 250000 "short");
+                            # raised a priori per AD4 per-torsion guidance, NOT tuned to the gate
   # -- used by boltz2 (deferred) --
   device: cuda                                     # cpu|cuda; comes from config, not core
   protein_sequence: PRWEQTHLTYRIENYTPDLPRADVDHAIEKAFQLWSNVTPLTFTKVSEGQADIMISFVRGDHRDNSPFDGPGGNLAHAFQPGPGIGGDAHFDEDERWTNNFREYNLHRVAAHELGHSLGLSHSTDIGALMYPSYTFSGDVQLAQDDIDGIQAIYGRS
