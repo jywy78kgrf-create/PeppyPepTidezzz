@@ -1,0 +1,11 @@
+# Zinc-binding-group (ZBG) SMARTS for MMP-1 inhibitors.
+# ZINC-SPECIFIC -> lives in CONFIG, never in core. Used by the ZBG
+# interpretability term and (optionally) to bias/flag candidates that can
+# chelate the catalytic zinc. name<TAB>SMARTS
+hydroxamate	[#6]C(=O)N[OX2H1,OX1-]
+carboxylate	[CX3](=O)[OX2H1,OX1-]
+thiol	[#6][SX2H1,SX1-]
+phosphinate	[PX4](=O)([OX2H1,OX1-])
+phosphonate	[PX4](=O)([OX2H1,OX1-])[OX2H1,OX1-]
+sulfonamide_zbg	[SX4](=O)(=O)[NX3]
+catechol	c1cc(O)c(O)cc1

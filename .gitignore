@@ -9,3 +9,8 @@ smoke/dock/*.fld
 smoke/dock/*.xyz
 smoke/dock/receptor*.pdbqt
 smoke/dock/AD4Zn.dat
+
+# results / engine workdirs
+results/
+*.dlg
+*.glg

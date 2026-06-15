@@ -1,0 +1,3 @@
+# CPU profile extras (this sandbox + any CPU machine).
+# AutoDock4/AutoGrid4/AutoDock-Vina/OpenBabel come from conda (see setup.sh).
+meeko==0.5.0          # ligand -> PDBQT preparation (provides mk_prepare_ligand.py)

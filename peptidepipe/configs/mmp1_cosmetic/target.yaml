@@ -1,0 +1,51 @@
+# ============================================================================
+# CONFIG: MMP-1 (cosmetic arm). The FIRST config the category-agnostic core
+# runs against. Re-aiming at another target = a new config dir like this one,
+# with NO core edits.
+# ============================================================================
+name: mmp1_cosmetic
+
+# --- structure / binding context (target-specific) -------------------------
+structure_path: structure/1HFC.pdb        # path relative to this config dir
+
+# --- SCORER SELECTION: the config-only swap point --------------------------
+# Change THIS one line to switch engines. Both read what they need from
+# scorer_params below; the core never imports either adapter directly.
+#   autodock4zn -> CPU, zinc-aware, runs in this sandbox now
+#   boltz2      -> GPU primary, deferred (run on a GPU instance, see README)
+scorer: autodock4zn
+
+scorer_params:
+  # -- used by autodock4zn --
+  ad4zn_dat: ../../../deps/ad4zn/AD4Zn.dat        # AD4Zn forcefield (zinc term)
+  zinc_pseudo_py: ../../../deps/ad4zn/zinc_pseudo.py
+  catalytic_metal: {element: ZN, resseq: 275}     # catalytic zinc = grid centre
+  npts: [40, 40, 40]
+  spacing: 0.375
+  seed: 42                                         # fixed -> reproducible (constraint #1)
+  ga_run: 10
+  ga_num_evals: 250000
+  # -- used by boltz2 (deferred) --
+  device: cuda                                     # cpu|cuda; comes from config, not core
+  protein_sequence: PRWEQTHLTYRIENYTPDLPRADVDHAIEKAFQLWSNVTPLTFTKVSEGQADIMISFVRGDHRDNSPFDGPGGNLAHAFQPGPGIGGDAHFDEDERWTNNFREYNLHRVAAHELGHSLGLSHSTDIGALMYPSYTFSGDVQLAQDDIDGIQAIYGRS
+
+# --- calibration set for THIS target (the gate's reference truth) ----------
+calibration_csv: calibration/peptidomimetic.csv   # 237 short ZBG peptidomimetics
+id_col: molecule_chembl_id
+smiles_col: canonical_smiles
+affinity_col: pIC50_median
+
+# --- fitness term weights: COSMETIC policy --------------------------------
+# (modest potency, heavy skin-permeability + safety-space). Used by the
+# multi-term fitness later; the calibration gate uses only the affinity term.
+weights:
+  affinity: 0.30
+  permeability: 0.45
+  safety: 0.25
+hit_threshold: 6.0          # pIC50; "hit" definition is target policy -> config
+
+# --- applicability domain + target-class extras ---------------------------
+domain:
+  chemotype_backbone_residues: [2, 3]   # short ZBG peptidomimetic window
+extra:
+  zbg_smarts: zbg_smarts.txt            # zinc-binding-group defs (zinc-specific)

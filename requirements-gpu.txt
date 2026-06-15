@@ -1,0 +1,4 @@
+# GPU profile extras (run on a CUDA instance, e.g. RunPod / Lambda).
+# Boltz-2 is the deferred PRIMARY affinity scorer. It pulls in torch; on a GPU
+# instance install a CUDA build of torch (see README) so torch.cuda.is_available().
+boltz==2.2.1
