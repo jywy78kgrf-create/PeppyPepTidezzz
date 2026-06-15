@@ -26,8 +26,12 @@ scorer_params:
   ga_run: 10
   ga_num_evals: 2500000     # AutoDock "medium/thorough" tier (was 250000 "short");
                             # raised a priori per AD4 per-torsion guidance, NOT tuned to the gate
-  # -- used by boltz2 (deferred) --
+  # -- used by boltz2 (deferred GPU primary) --
   device: cuda                                     # cpu|cuda; comes from config, not core
+  use_msa_server: true                             # auto-build the protein MSA (needs internet);
+                                                   # set false + msa_path to use a precomputed .a3m
+  # msa_path: structure/mmp1.a3m                   # optional precomputed MSA (config-relative)
+  diffusion_samples_affinity: 5                    # Boltz default; lower=faster, higher=steadier
   protein_sequence: PRWEQTHLTYRIENYTPDLPRADVDHAIEKAFQLWSNVTPLTFTKVSEGQADIMISFVRGDHRDNSPFDGPGGNLAHAFQPGPGIGGDAHFDEDERWTNNFREYNLHRVAAHELGHSLGLSHSTDIGALMYPSYTFSGDVQLAQDDIDGIQAIYGRS
 
 # --- calibration set for THIS target (the gate's reference truth) ----------

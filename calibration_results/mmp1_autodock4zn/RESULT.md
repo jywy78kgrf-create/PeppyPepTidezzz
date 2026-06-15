@@ -1,78 +1,70 @@
 # Calibration gate — MMP-1 (cosmetic arm), scorer = AutoDock4Zn
 
-## VERDICT: **NO-GO**
+## VERDICT: **NO-GO** (confirmed at thorough GA convergence)
 
 AutoDock4Zn docking score does **not** track measured MMP-1 potency on the
-237-compound peptidomimetic calibration set. Per the gate protocol, the pipeline
-is **not** validated end-to-end and candidate generation must **not** proceed
-until the binding scorer is reconsidered.
+237-compound peptidomimetic calibration set. Raising GA sampling 10× did not
+change this. Per the gate protocol, the pipeline is **not** validated end-to-end
+and candidate generation must **not** proceed; reconsider the binding scorer.
 
-## Result (the gate number)
+## Results — two attempts on the identical set & held-out split
 
-| metric | value | n | p |
-|---|---|---|---|
-| **Spearman ρ, FULL set** (AutoDock4Zn gate) | **+0.007** | 236 | 0.92 |
-| Spearman ρ, held-out fold | −0.025 | 47 | 0.87 |
-| Pearson r, FULL set | +0.100 | 236 | — |
+| attempt | ga_num_evals | n scored | Spearman ρ (FULL) | p | Spearman ρ (held-out 47) | p |
+|---|---|---|---|---|---|---|
+| #1 "short" | 250,000 | 236/237 | **+0.007** | 0.92 | −0.025 | 0.87 |
+| #2 "thorough" | 2,500,000 | 236/237 | **+0.054** | 0.41 | +0.021 | 0.89 |
 
-Both correlations are statistically indistinguishable from zero. A meaningfully
-positive correlation (the GO condition) is absent.
+Both are statistically indistinguishable from zero and far below the pre-stated
+GO bar (ρ ≥ ~0.4, p < 0.01 on the held-out fold). Pearson r at 2.5M = +0.12.
 
-Supporting evidence that the signal is genuinely absent (not a degenerate run):
-- Predicted scores span a real range (−21.6 … +8.6; σ≈1.5 over the bulk), so the
-  engine is discriminating poses, not returning a constant.
-- The most potent measured binders (pIC50 ≈ 8.9, sub-nM hydroxamates) receive
-  only mediocre docking scores (≈ 2.8–4.3); the single best-docked compound
-  (CHEMBL71120, score 8.6) is among the *weakest* measured (pIC50 4.85).
-- Best-docked decile mean pIC50 = 6.57 vs worst-docked decile = 6.21 — a
-  noise-level 0.36 gap (a working scorer would show a large positive gap).
+Artifacts: `ga250k_*` (attempt 1) and `ga2p5M_*` (attempt 2) — each a
+`predicted_vs_actual.{csv,png}`.
 
-See `predicted_vs_actual.png` (structureless vertical cloud) and
-`predicted_vs_actual.csv` (per-compound id, split, measured, predicted).
+## Why this is the scorer, not the search (the key diagnostic)
 
-## Method (as configured, not tuned)
+The 10× sampling increase **did** make the GA search more thorough — docking
+scores improved broadly (mean Δ +1.46; 229/236 compounds scored better; 123 moved
+by >1 unit). **Yet the correlation stayed flat.** More thorough search found
+lower-energy poses that ranked potency no better. A convergence spot-check
+(2.5M → 5M on a torsion-spanning, IC50-blind sample) showed scores have largely
+stopped moving (|Δ| = 0.00–0.09 for 3 of 4; 1.24 for one mid-torsion case). So the
+limiter is the **scoring function / pose ranking**, not GA convergence.
 
-- Target/structure: MMP-1, PDB **1HFC**, catalytic zinc (resseq 275) = grid centre.
-- Engine: **AutoDock 4.2.6 / AutoGrid 4.2.7.x**, AD4Zn zinc forcefield + TZ
-  tetrahedral-zinc pseudo-atom. Box 40×40×40 @ 0.375 Å.
-- Search (from config, unchanged): Lamarckian GA, ga_run=10, ga_num_evals=250000,
-  ga_pop_size=150, fixed seed 42. Ligands: RDKit ETKDGv3 (seed 42) → MMFF →
-  Meeko PDBQT (rigid macrocycles).
-- Calibration data: ChEMBL **CHEMBL332** (human MMP-1) IC50 → pIC50_median,
-  237 peptidomimetics (`calibration/peptidomimetic.csv`).
-- Held-out split: seed 1234, test_frac 0.2 → 190 train / 47 test
-  (`calibration/heldout_split.json`; reused unchanged by the future Boltz-2 run).
+Qualitative confirmation (2.5M): the 8 most potent (sub-nM) inhibitors dock at
+percentiles scattered from 14% to 96% — no consistent rank-up. Best-docked decile
+mean pIC50 = 6.55 vs worst-docked 5.92 (noise-level 0.63 gap).
+
+## Method (as configured; only ga_num_evals changed, a priori)
+
+- MMP-1, PDB **1HFC**, catalytic zinc (resseq 275) = grid centre; AD4Zn forcefield
+  + TZ tetrahedral-zinc pseudo-atom. Box 40³ @ 0.375 Å.
+- AutoDock **4.2.6** / AutoGrid **4.2.7.x**, Lamarckian GA, ga_run=10, fixed seed 42.
+- Ligands: RDKit ETKDGv3 (seed 42) → MMFF → Meeko PDBQT (rigid macrocycles).
+- Calibration: ChEMBL **CHEMBL332** IC50 → pIC50_median, 237 peptidomimetics.
+- Held-out split: seed 1234, 190 train / 47 test (`calibration/heldout_split.json`),
+  reused unchanged for the Boltz-2 run.
 
 ## Reproducibility (constraint #1) — verified
 
-Two independent full runs produced **byte-identical** predicted scores for all
-207 shared compounds (max |Δ| = 0.000000).
+The two 250k runs gave byte-identical predicted scores on all 207 shared compounds
+(max |Δ| = 0.000000).
 
 ## Coverage
 
-236 / 237 scored. One compound (CHEMBL4584813) exceeds AutoDock4's hard 32-torsion
-limit and cannot be docked by this engine.
+236 / 237 scored both times. CHEMBL4584813 exceeds AutoDock4's hard 32-torsion limit.
 
-## Interpretation / why this likely failed
+## Required next step
 
-Not investigated beyond the gate (the gate is decisive on its own), but the
-qualitative pattern — flexible, potent inhibitors scoring poorly — is consistent
-with **GA under-convergence**: 250 000 evaluations is well below AutoDock4's own
-guidance for ligands with ~10–13 rotatable bonds (these peptidomimetics have up
-to 12+), so the search often fails to find each ligand's favourable, zinc-chelated
-pose. Other candidates: rigid-receptor docking ignoring induced fit, and the
-coarse single-conformer receptor prep.
+Pause; do **not** generate candidates. The failure is not search depth, so simply
+docking harder will not help. Options (each must clear this same gate on this same
+held-out fold before candidate generation):
+- the deferred **Boltz-2** GPU primary (see repo README + runbook) — but watch for
+  pretraining leakage on ChEMBL MMP-1;
+- a plain **QSAR/ML baseline** trained on these 237 labels (cheap; strong for a
+  congeneric series) — also a useful "is this set even rankable?" control;
+- better physics (multi-conformer/flexible receptor, alternative engine, MM-GBSA
+  rescoring).
 
-## Required next step (do NOT skip)
-
-Pause. Do **not** generate candidates. Reconsider the binding scorer before
-re-running this gate. Options (each must re-pass this same gate, on this same
-held-out split, before candidate generation):
-- increase GA sampling (ga_num_evals) and/or replicas for the flexible ligands;
-- improve receptor/pose preparation;
-- bring forward the deferred **Boltz-2** primary scorer (GPU) — the held-out
-  fold is already preserved for a like-for-like comparison.
-
-Scoring/search parameters were **not** adjusted after seeing results; the only
-code changes made were correctness fixes required to make the pipeline run at all
-(receptor charging, DPF keywords, signed-energy parsing, macrocycle prep).
+Scoring/search parameters were not tuned to the gate metric; `ga_num_evals` was
+raised once, a priori, per AutoDock's per-torsion guidance, and committed before
+the result was known.

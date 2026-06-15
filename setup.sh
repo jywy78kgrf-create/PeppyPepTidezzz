@@ -54,11 +54,13 @@ if [ "$PROFILE" = "cpu" ]; then
 elif [ "$PROFILE" = "gpu" ]; then
   ENV=peppy-gpu
   if ! $CONDA env list | grep -q "^$ENV "; then
-    $CONDA create -n $ENV -y --override-channels -c conda-forge python=3.11
+    # list `pip` explicitly (conda-forge python does not pull it in) so the install
+    # below uses the env's own pip, not a bare system pip.
+    $CONDA create -n $ENV -y --override-channels -c conda-forge python=3.11 pip
   fi
-  $CONDA run -n $ENV pip install --quiet -r requirements-core.txt -r requirements-gpu.txt
+  $CONDA run -n $ENV python -m pip install --quiet -r requirements-core.txt -r requirements-gpu.txt
   # On a CUDA box, ensure a CUDA torch build (boltz pulls torch; override if needed):
-  #   $CONDA run -n $ENV pip install --index-url https://download.pytorch.org/whl/cu124 torch
+  #   $CONDA run -n $ENV python -m pip install --index-url https://download.pytorch.org/whl/cu124 torch
   $CONDA run -n $ENV python -c "import boltz, torch; print('gpu env OK; cuda=', torch.cuda.is_available())"
   echo "### GPU ready. Set scorer: boltz2 in target.yaml, then run run_calibration.py"
 

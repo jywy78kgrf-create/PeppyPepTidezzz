@@ -28,7 +28,14 @@ class Boltz2Affinity(AffinityScorer):
         p = self.params
         self.device = p.get("device", "cuda")          # from config; cpu allowed but impractical
         self.protein_seq = p["protein_sequence"]        # config supplies target sequence
-        self.workdir = Path(p.get("workdir", tempfile.mkdtemp(prefix="boltz2_")))
+        # Boltz REQUIRES an MSA for the protein. Either let it build one via the
+        # public mmseqs2 server (needs internet) or point at a precomputed .a3m.
+        self.use_msa_server = bool(p.get("use_msa_server", True))
+        self.msa_path = p.get("msa_path")               # optional precomputed a3m (config-relative)
+        if self.msa_path:
+            self.msa_path = target.resolve(self.msa_path)
+        self.diffusion_samples_affinity = int(p.get("diffusion_samples_affinity", 5))
+        self.workdir = Path(p.get("workdir", tempfile.mkdtemp(prefix="boltz2_"))).resolve()
         self.workdir.mkdir(parents=True, exist_ok=True)
 
         # Hard, honest gate: require the real dependency + accelerator. No fallback.
@@ -50,6 +57,7 @@ class Boltz2Affinity(AffinityScorer):
 
     def score(self, candidate: Candidate) -> AffinityResult:
         # Build a Boltz-2 YAML job: protein + ligand(SMILES) + affinity property.
+        msa_line = f"      msa: {self.msa_path}\n" if self.msa_path else ""
         job = self.workdir / f"{candidate.id}.yaml"
         job.write_text(
             "version: 1\n"
@@ -57,6 +65,7 @@ class Boltz2Affinity(AffinityScorer):
             "  - protein:\n"
             "      id: A\n"
             f"      sequence: {self.protein_seq}\n"
+            f"{msa_line}"
             "  - ligand:\n"
             "      id: L\n"
             f"      smiles: '{candidate.smiles}'\n"
@@ -66,13 +75,26 @@ class Boltz2Affinity(AffinityScorer):
         )
         acc = "gpu" if self.device == "cuda" else "cpu"
         cmd = ["boltz", "predict", str(job), "--out_dir", str(self.workdir),
-               "--accelerator", acc]
+               "--accelerator", acc,
+               "--diffusion_samples_affinity", str(self.diffusion_samples_affinity)]
+        if self.use_msa_server and not self.msa_path:
+            cmd.append("--use_msa_server")   # auto-build MSA (needs internet)
         subprocess.run(cmd, check=True, capture_output=True, text=True)
 
-        # Boltz-2 writes affinity_<name>.json with a predicted affinity value.
+        # Boltz-2 writes affinity_<name>.json. affinity_pred_value is log10(IC50[uM])
+        # -> LOWER = stronger binder. The AffinityScorer convention is higher = better,
+        # so the score is NEGATED (constraint: every adapter returns higher=stronger),
+        # which makes the calibration Spearman directly comparable to AutoDock4Zn.
         pred = list(self.workdir.glob(f"**/affinity_{candidate.id}.json"))
         if not pred:
             return AffinityResult(candidate.id, float("nan"), ok=False,
                                   note="boltz2: no affinity output")
-        val = json.loads(pred[0].read_text()).get("affinity_pred_value")
-        return AffinityResult(candidate.id, float(val), raw={"affinity_pred_value": val})
+        d = json.loads(pred[0].read_text())
+        val = d.get("affinity_pred_value")
+        if val is None:
+            return AffinityResult(candidate.id, float("nan"), ok=False,
+                                  note="boltz2: affinity_pred_value missing")
+        return AffinityResult(candidate.id, score=-float(val), raw={
+            "affinity_pred_value": val,                                  # log10(IC50 uM)
+            "affinity_probability_binary": d.get("affinity_probability_binary"),
+        })
