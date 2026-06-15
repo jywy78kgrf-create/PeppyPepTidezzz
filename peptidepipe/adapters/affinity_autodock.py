@@ -177,7 +177,11 @@ class AutoDock4ZnAffinity(AffinityScorer):
 
         lig_pdbqt = cdir / "lig.pdbqt"
         try:
-            _run(["mk_prepare_ligand.py", "-i", str(sdf), "-o", str(lig_pdbqt)])
+            # --rigid_macrocycles: dock macrocycles rigidly instead of emitting
+            # CG/G "glue" pseudo-atoms, whose maps the grid superset does not carry
+            # (otherwise AutoDock4 aborts with: Unknown ligand atom type "CG").
+            _run(["mk_prepare_ligand.py", "-i", str(sdf), "-o", str(lig_pdbqt),
+                  "--rigid_macrocycles"])
         except Exception as e:
             return AffinityResult(candidate.id, float("nan"), ok=False,
                                   note=f"ligand prep failed: {e}")
@@ -237,7 +241,9 @@ class AutoDock4ZnAffinity(AffinityScorer):
     def _best_energy(dlg) -> float | None:
         best = None
         for ln in Path(dlg).read_text().splitlines():
-            mo = re.search(r"Estimated Free Energy of Binding\s*=\s*([-\d.]+)", ln)
+            # signed float: poses with NO favourable conformation report a POSITIVE
+            # binding energy; the previous "[-\d.]+" silently dropped those compounds.
+            mo = re.search(r"Estimated Free Energy of Binding\s*=\s*([-+]?[0-9]*\.?[0-9]+)", ln)
             if mo:
                 v = float(mo.group(1))
                 best = v if best is None else min(best, v)
