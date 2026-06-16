@@ -79,7 +79,14 @@ class Boltz2Affinity(AffinityScorer):
                "--diffusion_samples_affinity", str(self.diffusion_samples_affinity)]
         if self.use_msa_server and not self.msa_path:
             cmd.append("--use_msa_server")   # auto-build MSA (needs internet)
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            # surface WHY (don't swallow it / crash the whole run): keep the tail
+            # of boltz's own stderr/stdout in the note so failures are diagnosable.
+            tail = ((e.stderr or "") + (e.stdout or "")).strip().splitlines()[-12:]
+            return AffinityResult(candidate.id, float("nan"), ok=False,
+                                  note=f"boltz predict exit {e.returncode}: " + " | ".join(tail))
 
         # Boltz-2 writes affinity_<name>.json. affinity_pred_value is log10(IC50[uM])
         # -> LOWER = stronger binder. The AffinityScorer convention is higher = better,
