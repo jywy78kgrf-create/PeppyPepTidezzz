@@ -13,7 +13,7 @@ structure_path: structure/1HFC.pdb        # path relative to this config dir
 # scorer_params below; the core never imports either adapter directly.
 #   autodock4zn -> CPU, zinc-aware, runs in this sandbox now
 #   boltz2      -> GPU primary, deferred (run on a GPU instance, see README)
-scorer: autodock4zn
+scorer: qsar        # calibration-validated (held-out Spearman +0.47); was autodock4zn
 
 scorer_params:
   # -- used by autodock4zn --
