@@ -9,3 +9,9 @@
 # (see README): pip install --index-url https://download.pytorch.org/whl/cu124 torch
 boltz==2.2.1
 matplotlib>=3.8
+# Boltz's triangle layers need NVIDIA cuEquivariance kernels or they crash
+# (ModuleNotFoundError: cuequivariance_torch). cu12 ops cover CUDA 12.x drivers.
+# (If unavailable on your box, set use_kernels: false in target.yaml for the
+# pure-torch fallback.)
+cuequivariance-torch
+cuequivariance-ops-torch-cu12
