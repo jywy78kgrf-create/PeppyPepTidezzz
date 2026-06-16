@@ -32,6 +32,9 @@ scorer_params:
                                                    # set false + msa_path to use a precomputed .a3m
   # msa_path: structure/mmp1.a3m                   # optional precomputed MSA (config-relative)
   diffusion_samples_affinity: 5                    # Boltz default; lower=faster, higher=steadier
+  use_kernels: true                                # cuEquivariance triangle kernels (fast). Set
+                                                   # false (--no_kernels, pure torch) if that lib
+                                                   # isn't installed -- otherwise Boltz crashes.
   protein_sequence: PRWEQTHLTYRIENYTPDLPRADVDHAIEKAFQLWSNVTPLTFTKVSEGQADIMISFVRGDHRDNSPFDGPGGNLAHAFQPGPGIGGDAHFDEDERWTNNFREYNLHRVAAHELGHSLGLSHSTDIGALMYPSYTFSGDVQLAQDDIDGIQAIYGRS
 
 # --- calibration set for THIS target (the gate's reference truth) ----------

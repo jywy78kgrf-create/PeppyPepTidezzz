@@ -35,6 +35,10 @@ class Boltz2Affinity(AffinityScorer):
         if self.msa_path:
             self.msa_path = target.resolve(self.msa_path)
         self.diffusion_samples_affinity = int(p.get("diffusion_samples_affinity", 5))
+        # Boltz uses NVIDIA cuEquivariance triangle kernels when use_kernels=True; if
+        # that library isn't installed it CRASHES rather than falling back, so allow
+        # config to force the pure-torch path (--no_kernels): slower but dependency-free.
+        self.use_kernels = bool(p.get("use_kernels", True))
         self.workdir = Path(p.get("workdir", tempfile.mkdtemp(prefix="boltz2_"))).resolve()
         self.workdir.mkdir(parents=True, exist_ok=True)
 
@@ -79,6 +83,8 @@ class Boltz2Affinity(AffinityScorer):
                "--diffusion_samples_affinity", str(self.diffusion_samples_affinity)]
         if self.use_msa_server and not self.msa_path:
             cmd.append("--use_msa_server")   # auto-build MSA (needs internet)
+        if not self.use_kernels:
+            cmd.append("--no_kernels")       # pure-torch fallback (no cuEquivariance)
         try:
             subprocess.run(cmd, check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as e:
