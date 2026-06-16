@@ -1,69 +1,51 @@
 # Calibration gate — MMP-1 (cosmetic arm), scorer = Boltz-2 (GPU)
 
-## STATUS: INCONCLUSIVE (partial run) — promising, not validated
+## VERDICT: NO-GO (weak positive, not significant)
 
-Run on a rented GPU (RunPod, A100 then A4500). GPU credit ran out partway, so
-**26 of the 47 held-out compounds** were scored. The runner processes in
-potency-descending order, so the 26 completed are the **most potent half**
-(pIC50 ≈ 6.5–9); the ~21 weakest held-out compounds were never scored.
+Held-out fold, near-complete run (**46 / 47** scored; 1 dropped). GPU: RunPod
+A100 then A5000 (cuEquivariance kernels, cu128 torch).
 
-## Result (held-out, partial)
-
-| metric | value | n |
-|---|---|---|
-| Spearman ρ, Boltz `affinity_pred_value` (negated) vs pIC50 | **+0.1145** | 26 |
-| Spearman ρ, Boltz `affinity_probability_binary` vs pIC50 | +0.0318 | 26 |
-
-### Head-to-head on the IDENTICAL 26 compounds
-| scorer | Spearman ρ |
+| metric | value |
 |---|---|
-| **Boltz-2** | **+0.1145** |
-| AutoDock4Zn (from the 2.5M run) | −0.1221 |
+| **Spearman ρ, Boltz score vs pIC50 (held-out)** | **+0.17** |
+| n | 46 |
+| p (two-tailed) | ≈ 0.25 (not significant) |
+| 95% CI (Fisher) | ≈ [−0.12, +0.44] (includes 0) |
+| pre-registered GO bar | ρ ≥ 0.4, p < 0.01 |
 
-Boltz is the **better** scorer (positive vs negative), but neither is strong, and
-+0.11 is not significant at n=26.
+Below the GO bar and not statistically distinguishable from zero.
 
-## Why this is inconclusive (and likely understates Boltz)
+### Same held-out fold, head-to-head
+| scorer | held-out ρ |
+|---|---|
+| **Boltz-2** | **+0.17** (n=46) |
+| AutoDock4Zn | −0.025 (n=47) |
 
-- **Incomplete:** only 26/47 (budget). A clean verdict needs all 47.
-- **Range-restricted:** the 26 are the potent half. Correlation within a narrow
-  potency band is mechanically suppressed. The missing weak compounds are exactly
-  the ones Boltz separated cleanly in the 5-compound preflight (potent +1.6/+1.8
-  vs weak −0.36), so finishing the run would most likely RAISE Boltz's ρ.
-- **Pre-flight (5 extremes) was clean:** mean score strong +1.72 vs weak −0.09,
-  SIGN OK, binder-probability monotonic (0.26 → 0.94 → 0.997). Extremes are easy;
-  the mid-range (where the partial run sits) is the hard part.
+Boltz is the better scorer (positive vs ~zero), but neither tracks measured
+potency well enough to pass. Extending from the potent-only partial (ρ=0.11, n=26)
+to the full range (ρ=0.17, n=46) barely moved it — the signal is genuinely weak,
+not just range-restricted.
 
-## Leakage caveat (unresolved)
+### Leakage note
+Boltz-2 was likely trained on public ChEMBL MMP-1 data, so its true generalisation
+to novel chemotypes is ≤ the observed 0.17 (memorisation can only inflate). At this
+weak level the distinction is academic — there is no strong signal to attribute.
+(`leakage_probe.py` can split the held-out by Murcko-scaffold novelty if a finer
+read is wanted.)
 
-Boltz-2's affinity head was trained on public data that likely includes ChEMBL
-MMP-1, so even a strong held-out ρ could be partial memorisation. Not a concern at
-the current weak ρ, but it must be probed (scaffold-novelty split, `leakage_probe.py`)
-before trusting any future "pass".
+## Pre-flight vs held-out — why the smoke test misled
+The 5-compound pre-flight looked great (potent +1.6/+1.8 vs weak −0.4, SIGN OK,
+binder-prob monotonic) because it used only the extremes, which are easy to
+separate. Across the full held-out range the mid-potency compounds dominate and
+Boltz does not rank them — hence ρ ≈ 0.17. A reminder that a clean extremes-only
+sanity check is necessary but not sufficient.
 
-## Engineering notes (what it took to run Boltz at all)
-
-GPU env required fixes beyond the committed scaffold, all pushed:
-- env build (`setup.sh --profile gpu`): pip-in-env + standalone Boltz install
-  (Boltz pins scikit-learn==1.6.1, conflicting with core's 1.5.1);
+## Engineering record (what it took to run Boltz on GPU)
+- env: standalone Boltz install (scikit-learn 1.6.1 vs core 1.5.1 conflict);
 - CUDA-12.8 torch build (`+cu128`) to match the host driver;
-- `cuequivariance-torch` + `cuequivariance-ops-torch-cu12` for Boltz's triangle
-  kernels (otherwise it crashes with ModuleNotFoundError; `use_kernels: false`
-  is the dependency-free fallback);
-- adapter fixes: pass an MSA (`--use_msa_server`), NEGATE `affinity_pred_value`
-  (log10(IC50 uM), lower=stronger) to honour higher=better, surface boltz errors.
+- cuEquivariance kernels (`cuequivariance-torch` + `-ops-torch-cu12`), else Boltz
+  crashes (ModuleNotFoundError); `use_kernels: false` is the pure-torch fallback;
+- adapter: pass an MSA (`--use_msa_server`), NEGATE `affinity_pred_value`
+  (log10(IC50 µM), lower=stronger), surface boltz errors, resumable runner.
 
-## Verdict and next step
-
-Neither engine currently justifies proceeding to candidate generation:
-- AutoDock4Zn: **NO-GO** (full 47, ρ ≈ 0, definitive).
-- Boltz-2: **INCONCLUSIVE** — better than AutoDock, but unproven on this partial,
-  range-restricted run.
-
-To resolve Boltz cleanly: finish the held-out 47 (resumable runner; ~$1–2 on a
-cheap GPU, picks up from compound 26), then judge against the pre-registered bar
-(ρ ≥ ~0.4, p < 0.01) AND the leakage probe. Even then, a borderline ρ would make
-Boltz a "lead to develop", not a validated scorer.
-
-Raw per-compound data: results/mmp1_boltz2_heldout.csv on the GPU volume
-(26 rows: id, measured pIC50, predicted score, binder probability).
+Raw per-compound data: results/mmp1_boltz2_heldout.csv (on the GPU volume).
