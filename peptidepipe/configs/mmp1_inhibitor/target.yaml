@@ -22,12 +22,15 @@ smiles_col: canonical_smiles
 affinity_col: pIC50_median
 
 # --- fitness weights: DRUG-DISCOVERY policy ------------------------------
-# affinity-dominant (the validated, strong signal); safety as a structural-alert
-# guard; skin-permeability is irrelevant for a systemic drug -> weight 0.
+# affinity (validated signal) balanced against drug-likeness (QED) and a safety
+# (structural-alert) guard; skin-permeability irrelevant for a systemic drug -> 0.
+# A multiplicative chelator-count penalty (applied automatically) further demotes
+# multi-metal-binder liabilities so the optimiser stops favouring them.
 weights:
-  affinity: 0.70
+  affinity: 0.50
+  druglikeness: 0.30
+  safety: 0.20
   permeability: 0.00
-  safety: 0.30
 hit_threshold: 7.0           # pIC50 >= 7 (100 nM) -- drug-potency bar
 
 # no peptidomimetic chemotype restriction for drug discovery

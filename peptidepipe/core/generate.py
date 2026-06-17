@@ -70,7 +70,9 @@ def brics_candidates(seed_smiles, n_max=4000, max_depth=2, seed=42):
     frags = set()
     for m in seeds:
         frags |= BRICS.BRICSDecompose(m)
-    frag_mols = [Chem.MolFromSmiles(f) for f in frags]
+    # sort: a set's iteration order varies across processes (hash randomisation),
+    # which made generation non-reproducible. Sorting fixes the fragment order.
+    frag_mols = [Chem.MolFromSmiles(f) for f in sorted(frags)]
     frag_mols = [f for f in frag_mols if f is not None]
 
     random.seed(seed)

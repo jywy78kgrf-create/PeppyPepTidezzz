@@ -114,7 +114,10 @@ def main():
     pIC50 = [r.raw["pIC50"] for _, r in keep]
     logkp = [fit.potts_guy_logkp(m) for m in mols]
     alerts = [fit.structural_alerts(m) for m in mols]
-    score, comp = fit.combine(pIC50, logkp, alerts, target.weights)
+    qed_vals = [fit.qed(m) for m in mols]
+    n_chel = [fit.chelator_types(m, zbg) for m in mols]
+    score, comp = fit.combine(pIC50, logkp, alerts, target.weights,
+                              qed_vals=qed_vals, n_chelators=n_chel)
 
     out = pd.DataFrame({
         "id": [c.id for c, _ in keep],
@@ -124,6 +127,9 @@ def main():
         "affinity_norm": comp["affinity_norm"],
         "permeability_norm": comp["permeability_norm"],
         "safety_norm": comp["safety_norm"],
+        "druglikeness_qed": qed_vals,
+        "n_chelators": n_chel,
+        "chelator_penalty": comp.get("chelator_penalty", 1.0),
         "logKp_cm_h": logkp,
         "struct_alerts": alerts,
         "applicability_tanimoto": [r.raw["max_tanimoto"] for _, r in keep],

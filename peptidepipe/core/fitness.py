@@ -41,23 +41,55 @@ def structural_alerts(mol) -> int:
     return len(_catalog().GetMatches(mol))
 
 
+def qed(mol) -> float:
+    """Quantitative Estimate of Drug-likeness (0..1, higher = more drug-like)."""
+    from rdkit.Chem import QED
+    try:
+        return float(QED.qed(mol))
+    except Exception:
+        return 0.0
+
+
+def chelator_types(mol, zbg_patterns) -> int:
+    """Number of DISTINCT zinc-binding-group motif types present. A clean MMP
+    inhibitor chelates the catalytic zinc with ONE group; >=2 metal-binders is the
+    over-chelation liability that plagued first-gen MMP inhibitors. zbg_patterns is
+    the config's (name, RDKit-SMARTS) list, so no target literals live here."""
+    return sum(1 for _, p in zbg_patterns if mol.HasSubstructMatch(p))
+
+
 def _minmax(v):
     v = np.asarray(v, dtype=float)
     lo, hi = np.nanmin(v), np.nanmax(v)
     return np.zeros_like(v) if hi - lo < 1e-12 else (v - lo) / (hi - lo)
 
 
-def combine(pIC50, logkp, alerts, weights):
+def combine(pIC50, logkp, alerts, weights, qed_vals=None, n_chelators=None):
     """Per-candidate weighted fitness in [0,1], normalised across the pool.
 
-    pIC50, logkp, alerts are arrays over the candidate pool. Returns (fitness,
-    components dict) where components are the normalised [0,1] terms."""
+    Core terms (always): affinity, permeability, safety. Optional terms:
+      qed_vals   -> a `druglikeness` term (QED is already 0..1; not re-normalised).
+      n_chelators-> a MULTIPLICATIVE penalty demoting over-chelators: 1 ZBG ->x1,
+                    2 ->x0.5, 3 ->x0.33 ... so the optimiser stops favouring the
+                    multi-metal-binder liability chemotype.
+    Weights come from CONFIG (target-class policy); terms are generic."""
     aff = _minmax(pIC50)
     perm = _minmax(logkp)
     safe = 1.0 - _minmax(alerts)                 # fewer alerts -> safer (higher)
-    wa = float(weights.get("affinity", 0.0))
-    wp = float(weights.get("permeability", 0.0))
-    ws = float(weights.get("safety", 0.0))
-    tot = wa + wp + ws or 1.0
-    fit = (wa * aff + wp * perm + ws * safe) / tot
-    return fit, {"affinity_norm": aff, "permeability_norm": perm, "safety_norm": safe}
+    parts = [(float(weights.get("affinity", 0.0)), aff),
+             (float(weights.get("permeability", 0.0)), perm),
+             (float(weights.get("safety", 0.0)), safe)]
+    comp = {"affinity_norm": aff, "permeability_norm": perm, "safety_norm": safe}
+    if qed_vals is not None:
+        dl = np.asarray(qed_vals, dtype=float)
+        parts.append((float(weights.get("druglikeness", 0.0)), dl))
+        comp["druglikeness"] = dl
+    tot = sum(w for w, _ in parts) or 1.0
+    fit = sum(w * v for w, v in parts) / tot
+    if n_chelators is not None:
+        nc = np.asarray(n_chelators, dtype=float)
+        pen = np.where(nc <= 1, 1.0, 1.0 / (1.0 + (nc - 1.0)))
+        fit = fit * pen
+        comp["chelator_penalty"] = pen
+        comp["n_chelators"] = nc
+    return fit, comp
