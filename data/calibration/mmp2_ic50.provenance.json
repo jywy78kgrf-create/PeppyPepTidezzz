@@ -1,0 +1,17 @@
+{
+  "generated_utc": "2026-06-17T00:32:24.114144Z",
+  "source": "ChEMBL REST API",
+  "target_chembl_id": "CHEMBL333",
+  "mmp": "mmp2",
+  "raw_ic50_records": 5054,
+  "records_passing_filters": 3659,
+  "unique_molecules": 3127,
+  "filters": [
+    "standard_type=IC50",
+    "standard_units=nM",
+    "standard_relation==",
+    "pchembl_value present",
+    "canonical_smiles present"
+  ],
+  "dedup": "median pIC50 per molecule"
+}
