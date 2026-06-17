@@ -1,0 +1,21 @@
+{
+  "model": "RandomForest",
+  "cv_spearman_train": {
+    "Ridge": 0.829074457045369,
+    "RandomForest": 0.8570117687741912,
+    "GradBoost": 0.8434843401320435,
+    "SVR": 0.8346479225505531,
+    "kNN": 0.8113780904578018
+  },
+  "heldout_spearman": 0.8613180240755096,
+  "heldout_pvalue": 8.931041093040894e-58,
+  "heldout_pearson": 0.8619273503720016,
+  "heldout_r2": 0.7409431079345368,
+  "heldout_rmse": 0.4522441888074906,
+  "scaffold_cv_spearman": 0.7620364498647122,
+  "n_train": 768,
+  "n_test": 192,
+  "n_scaffolds": 265,
+  "seed_split": 1234,
+  "seed_model": 42
+}
