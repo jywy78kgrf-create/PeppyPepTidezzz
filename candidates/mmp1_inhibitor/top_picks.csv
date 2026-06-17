@@ -1,0 +1,6 @@
+pick,id,smiles,MW,cLogP,pIC50_MMP1,sel_vs_MMP2,sel_vs_MMP3,sel_vs_MMP9,sel_vs_MMP13,min_selectivity,nearest_known,nearest_pIC50,nearest_Tanimoto,n_alerts,alerts
+1,CAND-04389,CC(C)C[C@@H](C(=O)N[C@H](Cc1cccc(=O)n1O)C(=O)O)[C@H](C)C(=O)NO,383.4,0.0,8.15,0.57,1.24,0.6,0.64,0.57,CHEMBL32730,8.89,0.54,3,N-hydroxyl_pyridine; Oxygen-nitrogen_single_bond; hydroxamic_acid
+2,CAND-04425,CC(C)C[C@@H](C(=O)N[C@H](Cc1cccc(=O)n1O)C(=O)O)[C@@H](C)C(=O)NO,383.4,0.0,8.15,0.57,1.24,0.6,0.64,0.57,CHEMBL32730,8.89,0.54,3,N-hydroxyl_pyridine; Oxygen-nitrogen_single_bond; hydroxamic_acid
+3,CAND-04423,C=CC[C@H](C(=O)NO)C(CC(C)C)C(=O)N[C@H](Cc1cccc(=O)n1O)C(=O)O,409.4,0.56,7.97,0.43,1.07,0.48,0.5,0.43,CHEMBL5187653,8.0,0.6,4,N-hydroxyl_pyridine; Oxygen-nitrogen_single_bond; hydroxamic_acid; isolated_alkene
+4,CAND-04467,C=CC[C@@H](C(=O)NO)[C@@H](CC(C)C)C(=O)N[C@H](Cc1cccc(=O)n1O)C(=O)O,409.4,0.56,7.97,0.43,1.07,0.48,0.5,0.43,CHEMBL5187653,8.0,0.6,4,N-hydroxyl_pyridine; Oxygen-nitrogen_single_bond; hydroxamic_acid; isolated_alkene
+5,CAND-04442,C=CC[C@H](C(=O)NO)[C@@H](CC(C)C)C(=O)N[C@H](Cc1cccc(=O)n1O)C(=O)O,409.4,0.56,7.97,0.43,1.07,0.48,0.5,0.43,CHEMBL5187653,8.0,0.6,4,N-hydroxyl_pyridine; Oxygen-nitrogen_single_bond; hydroxamic_acid; isolated_alkene
