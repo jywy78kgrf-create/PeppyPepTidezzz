@@ -1,0 +1,37 @@
+# ============================================================================
+# CONFIG: MMP-1 INHIBITOR (drug-discovery scope). Distinct from mmp1_cosmetic:
+# calibrated on the FULL ChEMBL MMP-1 inhibitor set (all chemotypes, 1,976
+# molecules) where the QSAR scores held-out Spearman +0.85 / scaffold +0.73.
+# Re-aiming = a new config dir like this one, NO core edits.
+# ============================================================================
+name: mmp1_inhibitor
+
+structure_path: ../mmp1_cosmetic/structure/1HFC.pdb   # reused (only docking needs it)
+
+# QSAR is the gate-validated scorer for this scope.
+scorer: qsar
+
+scorer_params:
+  seed: 42
+  ad_percentile: 10          # applicability domain = 10th pct cross-scaffold Tanimoto
+
+# full drug-discovery MMP-1 inhibitor calibration set (not the cosmetic subset)
+calibration_csv: ../../../data/calibration/mmp1_ic50.csv
+id_col: molecule_chembl_id
+smiles_col: canonical_smiles
+affinity_col: pIC50_median
+
+# --- fitness weights: DRUG-DISCOVERY policy ------------------------------
+# affinity-dominant (the validated, strong signal); safety as a structural-alert
+# guard; skin-permeability is irrelevant for a systemic drug -> weight 0.
+weights:
+  affinity: 0.70
+  permeability: 0.00
+  safety: 0.30
+hit_threshold: 7.0           # pIC50 >= 7 (100 nM) -- drug-potency bar
+
+# no peptidomimetic chemotype restriction for drug discovery
+domain:
+  chemotype_backbone_residues: [0, 99]
+extra:
+  zbg_smarts: ../mmp1_cosmetic/zbg_smarts.txt   # keep: zinc chelation is essential for MMP inhibition
