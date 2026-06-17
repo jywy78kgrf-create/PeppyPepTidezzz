@@ -1,0 +1,23 @@
+# CONFIG: HDAC6 INHIBITOR (drug-discovery). Goal profile: potent HDAC6, SPARING
+# class I (HDAC1/2/3) -- HDAC6-selective inhibitors avoid class-I-related toxicity.
+# Zinc/hydroxamate chemistry (like MMPs). QSAR gate: held-out Spearman +0.81.
+name: hdac6_inhibitor
+structure_path: ../mmp1_cosmetic/structure/1HFC.pdb   # unused by QSAR (field required)
+scorer: qsar
+scorer_params:
+  seed: 42
+  ad_percentile: 10
+calibration_csv: ../../../data/calibration/hdac6_ic50.csv
+id_col: molecule_chembl_id
+smiles_col: canonical_smiles
+affinity_col: pIC50_median
+weights:
+  affinity: 0.50
+  druglikeness: 0.30
+  safety: 0.20
+  permeability: 0.00
+hit_threshold: 7.0
+domain:
+  chemotype_backbone_residues: [0, 99]
+extra:
+  zbg_smarts: ../mmp1_cosmetic/zbg_smarts.txt

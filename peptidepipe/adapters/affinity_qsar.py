@@ -67,10 +67,9 @@ class QSARAffinity(AffinityScorer):
         from rdkit import DataStructs
         cross = []
         for i, fp in enumerate(self.train_fps):
-            sims = [DataStructs.TanimotoSimilarity(fp, self.train_fps[j])
-                    for j in range(len(self.train_fps)) if scaf[j] != scaf[i]]
-            if sims:
-                cross.append(max(sims))
+            others = [self.train_fps[j] for j in range(len(self.train_fps)) if scaf[j] != scaf[i]]
+            if others:                                   # C-level bulk Tanimoto (fast on big sets)
+                cross.append(max(DataStructs.BulkTanimotoSimilarity(fp, others)))
         pct = float(self.params.get("ad_percentile", 10))
         self.ad_threshold = float(np.percentile(cross, pct)) if cross else 0.3
 

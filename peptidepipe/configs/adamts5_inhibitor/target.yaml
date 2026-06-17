@@ -1,0 +1,23 @@
+# CONFIG: ADAMTS-5 INHIBITOR (drug-discovery, OA aggrecanase). Goal: potent
+# ADAMTS-5, SPARING ADAMTS-4. QSAR gate: held-out Spearman +0.86.
+# 
+name: adamts5_inhibitor
+structure_path: ../mmp1_cosmetic/structure/1HFC.pdb   # unused by QSAR (field required)
+scorer: qsar
+scorer_params:
+  seed: 42
+  ad_percentile: 10
+calibration_csv: ../../../data/calibration/adamts5_ic50.csv
+id_col: molecule_chembl_id
+smiles_col: canonical_smiles
+affinity_col: pIC50_median
+weights:
+  affinity: 0.50
+  druglikeness: 0.30
+  safety: 0.20
+  permeability: 0.00
+hit_threshold: 7.0
+domain:
+  chemotype_backbone_residues: [0, 99]
+extra:
+  zbg_smarts: ../mmp1_cosmetic/zbg_smarts.txt
