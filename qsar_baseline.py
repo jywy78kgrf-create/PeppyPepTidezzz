@@ -15,6 +15,7 @@ Discipline (no leakage):
 Deterministic: fixed seeds throughout.
 """
 from __future__ import annotations
+import argparse
 import json
 from pathlib import Path
 import numpy as np
@@ -77,7 +78,14 @@ def spearman(a, b):
 
 
 def main():
-    df = pd.read_csv(CFG_CSV)[["molecule_chembl_id", "canonical_smiles", "pIC50_median"]].dropna().reset_index(drop=True)
+    global OUT
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--csv", default=CFG_CSV, help="calibration CSV (id, SMILES, pIC50)")
+    ap.add_argument("--outdir", default=str(OUT))
+    args = ap.parse_args()
+    OUT = Path(args.outdir); OUT.mkdir(parents=True, exist_ok=True)
+    print(f"calibration set: {args.csv}")
+    df = pd.read_csv(args.csv)[["molecule_chembl_id", "canonical_smiles", "pIC50_median"]].dropna().reset_index(drop=True)
     X, ok = featurize(df["canonical_smiles"])
     df = df[ok].reset_index(drop=True)
     y = df["pIC50_median"].to_numpy()
