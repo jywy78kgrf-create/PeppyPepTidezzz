@@ -1,0 +1,9 @@
+{
+  "generated_utc": "2026-06-17T14:17:23.045367Z",
+  "source": "ChEMBL REST API",
+  "target_chembl_id": "CHEMBL2318",
+  "name": "adamts4",
+  "raw_ic50_records": 520,
+  "records_passing_filters": 410,
+  "unique_molecules": 335
+}

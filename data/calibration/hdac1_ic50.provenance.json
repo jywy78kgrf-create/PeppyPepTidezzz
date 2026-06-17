@@ -1,0 +1,9 @@
+{
+  "generated_utc": "2026-06-17T14:16:04.304183Z",
+  "source": "ChEMBL REST API",
+  "target_chembl_id": "CHEMBL325",
+  "name": "hdac1",
+  "raw_ic50_records": 12269,
+  "records_passing_filters": 10347,
+  "unique_molecules": 8176
+}
