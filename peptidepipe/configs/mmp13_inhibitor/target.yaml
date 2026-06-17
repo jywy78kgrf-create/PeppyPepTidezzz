@@ -1,0 +1,35 @@
+# ============================================================================
+# CONFIG: MMP-13 INHIBITOR (drug-discovery, OA-type profile). MMP-13
+# (collagenase-3) degrades cartilage type-II collagen -> the osteoarthritis
+# target. The therapeutic twist: SPARE MMP-1 (systemic MMP-1 inhibition drove the
+# musculoskeletal toxicity that sank first-gen MMP drugs). So we want potent
+# MMP-13 + MMP-1-sparing -- the OPPOSITE selectivity of the mmp1_inhibitor config.
+# Calibrated on the full ChEMBL MMP-13 set (QSAR held-out Spearman +0.81).
+# ============================================================================
+name: mmp13_inhibitor
+
+structure_path: ../mmp1_cosmetic/structure/1HFC.pdb   # unused by QSAR (field required)
+
+scorer: qsar
+scorer_params:
+  seed: 42
+  ad_percentile: 10
+
+calibration_csv: ../../../data/calibration/mmp13_ic50.csv
+id_col: molecule_chembl_id
+smiles_col: canonical_smiles
+affinity_col: pIC50_median
+
+# drug-discovery policy (affinity = MMP-13 potency here) + druglikeness + safety;
+# the chelator-count penalty (applied automatically) demotes over-chelators.
+weights:
+  affinity: 0.50
+  druglikeness: 0.30
+  safety: 0.20
+  permeability: 0.00
+hit_threshold: 7.0
+
+domain:
+  chemotype_backbone_residues: [0, 99]
+extra:
+  zbg_smarts: ../mmp1_cosmetic/zbg_smarts.txt
