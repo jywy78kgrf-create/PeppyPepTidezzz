@@ -14,3 +14,12 @@ smoke/dock/AD4Zn.dat
 results/
 *.dlg
 *.glg
+
+# optionsdesk
+optionsdesk/frontend/node_modules/
+optionsdesk/frontend/dist/
+optionsdesk/.state/
+optionsdesk/data/chains/*.parquet
+optionsdesk/data/chains/*.csv
+optionsdesk/data/universe/universe.csv
+.env
