@@ -27,6 +27,17 @@
 - Each iteration is a `LearnIteration` record; the UI streams these so you watch
   the objective climb as the desk improves itself.
 
+## Position sizing & risk budgeting
+`risk/` sits between signal and execution. A `PositionSizer` turns a proposal +
+account equity into a *desired* lot count (fixed-fraction, fractional-Kelly, or
+risk-parity), and a `RiskBudget` trims that to satisfy live portfolio caps
+(total risk, per-position, per-ticker, per-sector, concurrency). Because the
+budget reads capital-at-risk straight off the open book, it's a pure function of
+current state — no separate commit/release ledger. The backtester scales each
+proposal's legs and max-P&L by the final lot count, so cash, carry, and exit
+thresholds all stay coherent. Kelly's refusal to size negative-edge trades is a
+feature: on data without real edge it correctly trades nothing.
+
 ## Data flow
 `ChainStore` → `StrategySuggester` ranks `StrategySpec`s → `Backtester` simulates
 → `LearningLoop` tunes → `PaperBroker` forward-tests → `IBKRBroker` (future) for

@@ -14,6 +14,7 @@ universe size, how many delisted names were traded, and a survivorship note.
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from datetime import date
 
 from ..config import SETTINGS
@@ -27,6 +28,7 @@ from ..contracts import (
     Trade,
 )
 from ..data.loader import ChainStore
+from ..risk import PositionSizer, RiskBudget, RiskConfig, unit_risk_for
 from ..strategies.library import STRATEGIES
 from .portfolio import OpenPosition, Portfolio
 
@@ -56,11 +58,14 @@ class Backtester:
 
     # ------------------------------------------------------------------ #
     def run(self, strategy_name: str, params: dict, tickers: list[str],
-            start: date, end: date, capital: float | None = None) -> BacktestResult:
+            start: date, end: date, capital: float | None = None,
+            risk: RiskConfig | dict | None = None) -> BacktestResult:
         """Backtest ``strategy_name`` over ``tickers`` within ``[start, end]``.
 
-        Returns a :class:`BacktestResult` with a daily equity curve, the list of
-        round-trip trades, and survivorship-aware metrics.
+        ``risk`` selects the position-sizing rule and portfolio risk budget
+        (see :class:`optdesk.risk.RiskConfig`); positions are sized to that
+        budget instead of a flat 1 lot. Returns a :class:`BacktestResult` with a
+        daily equity curve, round-trip trades, and survivorship-aware metrics.
         """
         if strategy_name not in STRATEGIES:
             raise KeyError(f"Unknown strategy '{strategy_name}'. "
@@ -68,6 +73,13 @@ class Backtester:
         builder = STRATEGIES[strategy_name]
         cfg = dict(_RUN_DEFAULTS)
         cfg.update(params or {})
+
+        # Position sizing + portfolio risk budget.
+        rc = risk if isinstance(risk, RiskConfig) else RiskConfig.from_dict(risk)
+        rc.max_concurrent = cfg["max_concurrent"]
+        sizer = PositionSizer(rc)
+        budget = RiskBudget(rc, self._sector_map())
+        cfg["risk"] = rc.to_dict()
 
         start, end = _as_date(start), _as_date(end)
         capital = float(capital if capital is not None else self.settings.starting_capital)
@@ -103,6 +115,7 @@ class Backtester:
                     pf.close(pos, chain, day, reason=reason, at_intrinsic=at_intrinsic)
 
             # 3) Generate new signals (one per ticker per cooldown window).
+            cur_equity = pf.equity(chains, day)  # sizing basis for today
             for tk in tickers:
                 if not pf.can_open():
                     break
@@ -119,6 +132,13 @@ class Backtester:
                 spec = self._build(builder, chain, params or {}, cfg)
                 if spec is None:
                     continue
+                # Size the position to the risk budget, then scale the legs.
+                unit_risk = unit_risk_for(spec, cur_equity, rc)
+                desired = sizer.desired_contracts(spec, cur_equity, unit_risk)
+                qty = budget.fit(spec, desired, unit_risk, cur_equity, pf.open_positions)
+                if qty < 1:
+                    continue
+                spec = _scale_spec(spec, qty, unit_risk)
                 opened = pf.open(spec, chain, day, cfg["profit_target"], cfg["stop_mult"])
                 if opened is not None:
                     last_signal[tk] = day
@@ -158,6 +178,18 @@ class Backtester:
     # ------------------------------------------------------------------ #
     # Helpers
     # ------------------------------------------------------------------ #
+    def _sector_map(self) -> dict[str, str]:
+        """ticker -> sector from the universe (for concentration limits)."""
+        u = self.store.universe
+        if u is None or u.empty or "sector" not in u or "ticker" not in u:
+            return {}
+        out: dict[str, str] = {}
+        for _, row in u.iterrows():
+            tk = row.get("ticker")
+            if isinstance(tk, str):
+                out[tk.upper()] = str(row.get("sector") or "UNKNOWN")
+        return out
+
     def _calendar(self, tickers: list[str], start: date, end: date) -> list[date]:
         """Sorted union of in-range trading dates across all tickers."""
         days: set[date] = set()
@@ -224,6 +256,22 @@ class Backtester:
 def _underlying(chain: list[OptionQuote]) -> float:
     """Underlying price from a chain snapshot."""
     return next((q.underlying for q in chain if q.underlying > 0), 0.0)
+
+
+def _scale_spec(spec: StrategySpec, qty: int, unit_risk: float) -> StrategySpec:
+    """Scale a 1-lot spec to ``qty`` contracts (legs + max P&L), recording size.
+
+    Multiplies every leg's quantity and the per-lot max_loss/max_profit so the
+    portfolio's capital-at-risk, carry, and exit thresholds all scale coherently.
+    """
+    spec.legs = [replace(leg, quantity=leg.quantity * qty) for leg in spec.legs]
+    if math.isfinite(spec.max_loss):
+        spec.max_loss *= qty
+    if math.isfinite(spec.max_profit):
+        spec.max_profit *= qty
+    spec.meta = {**spec.meta, "contracts": qty, "unit_risk": round(unit_risk, 2),
+                 "position_risk": round(qty * unit_risk, 2)}
+    return spec
 
 
 def _signed_open(pos: OpenPosition) -> list[float]:

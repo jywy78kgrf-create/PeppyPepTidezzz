@@ -1,0 +1,41 @@
+# ATLAS Options Desk — full stack (backend API + reverse-proxied SPA)
+#
+#   docker compose up --build
+#   open http://localhost:8080
+#
+# Drop your real chains into ./data/chains and universe into ./data/universe
+# (see docs/DATA_CONTRACT.md); the ./data dir is bind-mounted, no rebuild needed.
+
+services:
+  backend:
+    build: ./backend
+    image: atlas-backend
+    restart: unless-stopped
+    environment:
+      ALPHAVANTAGE_API_KEY: ${ALPHAVANTAGE_API_KEY:-}
+      ALPHAVANTAGE_PREMIUM: ${ALPHAVANTAGE_PREMIUM:-1}
+      OPTDESK_CAPITAL: ${OPTDESK_CAPITAL:-100000}
+      OPTDESK_RFR: ${OPTDESK_RFR:-0.045}
+      # live trading stays OFF unless explicitly enabled
+      OPTDESK_LIVE: ${OPTDESK_LIVE:-0}
+      IBKR_HOST: ${IBKR_HOST:-host.docker.internal}
+      IBKR_PORT: ${IBKR_PORT:-7497}
+    volumes:
+      - ./data:/app/data        # your option chains + universe (bind mount)
+      - paperstate:/app/.state  # persisted paper-trading book
+    ports:
+      - "8000:8000"             # direct API access (optional; SPA uses the proxy)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # reach IB Gateway/TWS on the host
+
+  frontend:
+    build: ./frontend
+    image: atlas-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  paperstate:

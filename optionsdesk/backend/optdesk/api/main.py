@@ -25,6 +25,7 @@ from .schemas import (
     LearnRequest,
     PaperCloseRequest,
     PaperOpenRequest,
+    SizeRequest,
 )
 
 VERSION = "0.1.0"
@@ -148,11 +149,9 @@ def backtest(req: BacktestRequest) -> dict:
     bt = Backtester(store(), settings=SETTINGS)
     try:
         result = bt.run(
-            req.strategy, req.params, req.tickers, req.start, req.end, capital=req.capital
+            req.strategy, req.params, req.tickers, req.start, req.end,
+            capital=req.capital, risk=req.risk,
         )
-    except TypeError:
-        # Engine may not accept capital kwarg; retry without it.
-        result = bt.run(req.strategy, req.params, req.tickers, req.start, req.end)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f"backtest failed: {exc}") from exc
 
@@ -227,6 +226,73 @@ def learn_stream(
         ) + "\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+# --------------------------------------------------------------------------- #
+# Risk: sizing config + per-trade preview
+# --------------------------------------------------------------------------- #
+@app.get("/api/risk/config")
+def risk_config() -> dict:
+    """Default position-sizing / risk-budget configuration."""
+    from ..risk import RiskConfig
+
+    return RiskConfig().to_dict()
+
+
+@app.post("/api/risk/size")
+def risk_size(req: SizeRequest) -> dict:
+    """Preview how many contracts a strategy would trade under a risk config.
+
+    Returns the desired vs budget-capped lots and the binding concentration cap,
+    so the desk can show *why* a position is the size it is.
+    """
+    from ..risk import PositionSizer, RiskBudget, RiskConfig, unit_risk_for
+    from ..strategies.library import STRATEGIES
+    from ..strategies.suggester import StrategySuggester
+
+    s = store()
+    asof = req.date or (s.trading_dates(req.ticker)[-1] if s.trading_dates(req.ticker) else None)
+    if asof is None:
+        raise HTTPException(404, f"no data for {req.ticker}")
+    chain = s.chain(req.ticker, asof)
+    if not chain:
+        raise HTTPException(404, f"no chain for {req.ticker} on {asof}")
+
+    spec = None
+    if req.strategy in STRATEGIES:
+        spec = STRATEGIES[req.strategy](chain, chain[0].underlying, req.params or {})
+    if spec is None:
+        ranked = StrategySuggester(SETTINGS).suggest(chain, asof, top_k=10, params=req.params)
+        spec = next((sp for sp in ranked if sp.name == req.strategy), ranked[0] if ranked else None)
+    if spec is None:
+        raise HTTPException(400, f"could not build strategy {req.strategy}")
+
+    rc = RiskConfig.from_dict(req.risk)
+    equity = float(req.equity or SETTINGS.starting_capital)
+    unit_risk = unit_risk_for(spec, equity, rc)
+    desired = PositionSizer(rc).desired_contracts(spec, equity, unit_risk)
+    decision = RiskBudget(rc, _sector_map_from_store(s)).fit(
+        spec, desired, unit_risk, equity, [], explain=True
+    )
+    return {
+        "asof": asof.isoformat(),
+        "strategy": spec.name,
+        "ticker": spec.ticker,
+        "equity": equity,
+        "method": rc.method,
+        "spec": serialize(spec),
+        "sizing": serialize(decision),
+    }
+
+
+def _sector_map_from_store(s: ChainStore) -> dict[str, str]:
+    u = s.universe
+    out: dict[str, str] = {}
+    if u is not None and not u.empty and "sector" in u and "ticker" in u:
+        for _, row in u.iterrows():
+            if isinstance(row.get("ticker"), str):
+                out[row["ticker"].upper()] = str(row.get("sector") or "UNKNOWN")
+    return out
 
 
 # --------------------------------------------------------------------------- #

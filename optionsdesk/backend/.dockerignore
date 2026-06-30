@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.state/
+.venv/
+.pytest_cache/
+data/chains/*.parquet
+data/chains/*.csv
+data/universe/universe.csv

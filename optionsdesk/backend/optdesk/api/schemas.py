@@ -17,6 +17,17 @@ class BacktestRequest(BaseModel):
     start: date
     end: date
     capital: Optional[float] = None
+    risk: Optional[dict[str, Any]] = None  # RiskConfig fields; None -> defaults
+
+
+class SizeRequest(BaseModel):
+    """Preview position sizing for a strategy on a given day."""
+    strategy: str
+    ticker: str
+    date: Optional[date] = None
+    equity: Optional[float] = None
+    params: dict[str, Any] = Field(default_factory=dict)
+    risk: Optional[dict[str, Any]] = None
 
 
 class LearnRequest(BaseModel):
