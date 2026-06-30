@@ -1,0 +1,225 @@
+@import 'tailwindcss';
+
+/* ===================================================================== */
+/*  ATLAS design tokens — Bloomberg-terminal-meets-luxury-fintech        */
+/* ===================================================================== */
+@theme {
+  --font-sans: 'Inter', 'Söhne', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Roboto Mono', ui-monospace, monospace;
+
+  /* deep cold-charcoal base, not black */
+  --color-void: #04060a;
+  --color-abyss: #070a11;
+  --color-panel: #0b0f18;
+  --color-panel-2: #0e131e;
+  --color-edge: #1a2231;
+  --color-edge-soft: #131a27;
+
+  --color-ink: #e8edf6;
+  --color-ink-dim: #97a3b8;
+  --color-ink-faint: #5b6678;
+
+  /* signal palette — restrained, expensive */
+  --color-gold: #d8b365;        /* brand accent — burnished gold */
+  --color-gold-bright: #f2cf86;
+  --color-teal: #38d6c4;        /* live / connected */
+  --color-up: #34d399;          /* gains */
+  --color-down: #f0616d;        /* losses */
+  --color-amber: #f3b13b;
+  --color-iris: #7c8cf0;        /* learning loop accent */
+}
+
+@layer base {
+  * {
+    border-color: var(--color-edge);
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+  body {
+    background-color: var(--color-void);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow: hidden;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--color-gold) 35%, transparent);
+    color: #fff;
+  }
+  /* slim custom scrollbars */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--color-edge) 80%, transparent);
+    border-radius: 99px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--color-ink-faint) 60%, transparent);
+    background-clip: padding-box;
+  }
+}
+
+/* ===================================================================== */
+/*  Reusable component classes                                           */
+/* ===================================================================== */
+@layer components {
+  /* Glass panel: layered depth via stacked shadows + gradient skin */
+  .glass {
+    position: relative;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--color-panel-2) 92%, transparent) 0%, color-mix(in srgb, var(--color-panel) 96%, transparent) 100%);
+    border: 1px solid color-mix(in srgb, var(--color-edge) 90%, transparent);
+    border-radius: 14px;
+    backdrop-filter: blur(14px) saturate(120%);
+    box-shadow:
+      0 1px 0 0 color-mix(in srgb, #ffffff 6%, transparent) inset,
+      0 -1px 0 0 color-mix(in srgb, #000000 40%, transparent) inset,
+      0 18px 40px -24px rgba(0, 0, 0, 0.9),
+      0 4px 14px -8px rgba(0, 0, 0, 0.7);
+  }
+  /* faint top highlight line for the "milled metal" lip */
+  .glass::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--color-gold) 22%, transparent) 18%,
+      color-mix(in srgb, #ffffff 18%, transparent) 50%,
+      color-mix(in srgb, var(--color-gold) 22%, transparent) 82%,
+      transparent
+    );
+    opacity: 0.5;
+    pointer-events: none;
+    border-radius: 14px 14px 0 0;
+  }
+
+  .panel-title {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-ink-faint);
+  }
+
+  .hairline {
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--color-edge) 100%, transparent),
+      transparent
+    );
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    border: 1px solid color-mix(in srgb, var(--color-edge) 80%, transparent);
+    background: color-mix(in srgb, var(--color-panel) 60%, transparent);
+  }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 7px;
+    border-radius: 6px;
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-ink-dim);
+    background: color-mix(in srgb, var(--color-iris) 9%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-iris) 18%, transparent);
+  }
+
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1, 'zero' 1;
+  }
+
+  .btn {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--color-edge) 90%, transparent);
+    background: color-mix(in srgb, var(--color-panel-2) 80%, transparent);
+    color: var(--color-ink-dim);
+    transition: all 0.18s ease;
+    cursor: pointer;
+  }
+  .btn:hover {
+    color: var(--color-ink);
+    border-color: color-mix(in srgb, var(--color-gold) 40%, transparent);
+    background: color-mix(in srgb, var(--color-gold) 8%, transparent);
+  }
+  .btn-danger:hover {
+    border-color: color-mix(in srgb, var(--color-down) 50%, transparent);
+    background: color-mix(in srgb, var(--color-down) 10%, transparent);
+    color: var(--color-down);
+  }
+}
+
+/* film-grain / noise overlay (data-URI fractal noise) */
+.noise-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0.04;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* subtle vignette to focus the desk */
+.vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: radial-gradient(120% 90% at 50% 0%, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+}
+
+@keyframes ticker {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.animate-ticker {
+  animation: ticker 60s linear infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.8); }
+}
+.pulse-dot {
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+
+@keyframes sheen {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
