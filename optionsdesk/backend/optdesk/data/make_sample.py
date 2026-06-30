@@ -46,10 +46,21 @@ def gen_ticker(ticker: str, seed: int, s0: float, vol: float, drift: float,
     rows = []
     S = s0
     r = 0.045
+    inst_vol = vol  # instantaneous vol mean-reverts around `vol` (stochastic vol)
     dates = [start + timedelta(days=i) for i in range(days) if (start + timedelta(days=i)).weekday() < 5]
     for d in dates:
-        # GBM step (daily)
-        S *= math.exp((drift - 0.5 * vol**2) / 252 + vol / math.sqrt(252) * rng.standard_normal())
+        # mean-reverting stochastic vol (vol-of-vol) so IV is a noisy, imperfect
+        # forecast of realized vol -> options are sometimes mis-priced, like reality
+        inst_vol += 5.0 * (vol - inst_vol) / 252 + 0.6 * vol / math.sqrt(252) * rng.standard_normal()
+        inst_vol = float(min(max(inst_vol, 0.08), 1.5))
+        # diffusive GBM step on the realized (instantaneous) vol
+        z = rng.standard_normal()
+        S *= math.exp((drift - 0.5 * inst_vol**2) / 252 + inst_vol / math.sqrt(252) * z)
+        # occasional jumps (gap risk) NOT fully priced into IV -> short premium can lose
+        if rng.random() < 0.02:
+            S *= math.exp(rng.normal(-0.04, 0.06))
+        # quoted IV tracks current vol with a small risk premium + estimation noise
+        quote_vol = max(0.06, inst_vol * 1.05 + rng.normal(0, 0.015))
         # monthly expiries out to ~120 days
         for dte in (7, 14, 30, 60, 90, 120):
             expiry = d + timedelta(days=dte)
@@ -59,7 +70,7 @@ def gen_ticker(ticker: str, seed: int, s0: float, vol: float, drift: float,
                 K = max(1.0, atm + k * 2.5)
                 # smile
                 moneyness = math.log(K / S)
-                sigma = vol * (1 + 0.6 * moneyness**2 + 0.04 * (-moneyness))
+                sigma = quote_vol * (1 + 0.6 * moneyness**2 + 0.04 * (-moneyness))
                 sigma = max(0.05, sigma)
                 for call in (True, False):
                     price, delta, gamma, theta, vega, rho = bs_greeks(S, K, T, r, sigma, call)
