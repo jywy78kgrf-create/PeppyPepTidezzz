@@ -114,16 +114,22 @@ def universe() -> dict:
 @app.get("/api/suggestions")
 def suggestions(
     ticker: str = Query(...),
-    date: str = Query(...),
+    date: str | None = Query(None, description="defaults to latest trading date for the ticker"),
     top_k: int = Query(5, ge=1, le=25),
 ) -> dict:
     from ..strategies.suggester import StrategySuggester
 
     s = store()
-    asof = _parse_date(date)
+    if date:
+        asof = _parse_date(date)
+    else:
+        dates = s.trading_dates(ticker)
+        if not dates:
+            raise HTTPException(404, f"no data for {ticker}")
+        asof = dates[-1]
     chain = s.chain(ticker, asof)
     if not chain:
-        raise HTTPException(404, f"no chain for {ticker} on {date}")
+        raise HTTPException(404, f"no chain for {ticker} on {asof.isoformat()}")
     specs = StrategySuggester(SETTINGS).suggest(chain, asof, top_k=top_k)
     return {
         "asof": asof.isoformat(),
