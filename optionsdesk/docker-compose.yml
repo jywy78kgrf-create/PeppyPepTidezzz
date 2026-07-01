@@ -24,7 +24,7 @@ services:
       - ./data:/app/data        # your option chains + universe (bind mount)
       - paperstate:/app/.state  # persisted paper-trading book
     ports:
-      - "8000:8000"             # direct API access (optional; SPA uses the proxy)
+      - "${BACKEND_PORT:-8000}:8000"   # direct API access (optional; SPA uses the proxy)
     extra_hosts:
       - "host.docker.internal:host-gateway"  # reach IB Gateway/TWS on the host
 
@@ -35,7 +35,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "8080:80"
+      - "${FRONTEND_PORT:-8080}:80"
 
 volumes:
   paperstate:
