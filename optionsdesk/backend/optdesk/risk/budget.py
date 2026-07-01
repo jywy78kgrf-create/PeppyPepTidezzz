@@ -60,7 +60,8 @@ class RiskBudget:
         ``per_ticker_frac``.
         """
         sec = self._sector(ticker)
-        if not sec or str(sec).strip().upper() == "UNKNOWN":
+        norm = str(sec).strip().upper() if sec is not None else ""
+        if norm in ("", "UNKNOWN", "NAN", "NONE", "NULL"):
             return f"__{ticker.upper()}"
         return str(sec)
 
