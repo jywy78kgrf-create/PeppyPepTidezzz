@@ -20,8 +20,10 @@ Recommended flow (verify the schema on ONE file before the full run):
     # 1. inspect: reads a single option file, prints its structure + mapping
     python -m optdesk.data.import_data --src ~/.meridian-data --inspect
 
-    # 2. full import (wipes the synthetic sample first)
-    python -m optdesk.data.import_data --src ~/.meridian-data --wipe-sample
+    # 2. full import — parallel across CPU cores; --skip-existing resumes an
+    #    interrupted run (already-imported tickers are left untouched)
+    python -m optdesk.data.import_data --src ~/.meridian-data --skip-existing
+    #    (add --wipe-sample on a fresh run; --workers N to tune parallelism)
 
 Inside Docker (raw data bind-mounted at /app/data/raw):
     docker compose exec backend python -m optdesk.data.import_data \
@@ -32,7 +34,9 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import timedelta
 from pathlib import Path
 
@@ -216,40 +220,50 @@ def inspect(src: Path) -> None:
           f"({'ok ✓' if eq else 'NOT FOUND — underlying will fall back to chain field'})")
 
 
-def gather_meridian(src: Path, opt_dir: Path, limit: int | None = None):
-    """Yield (ticker, DataFrame) per symbol from the Meridian layout."""
-    sym_dirs = sorted([d for d in opt_dir.iterdir() if d.is_dir()])
-    for i, sd in enumerate(sym_dirs):
-        ticker = sd.name.upper()
-        eq = _equity_close_map(src, sd.name)
-        frames = []
-        for f in sorted(sd.glob("*.json*")):
-            asof = f.name.split(".")[0]  # "2021-11-10.json.gz" -> "2021-11-10"
-            try:
-                obj = _read_gz_json(f) if f.suffix == ".gz" else json.loads(f.read_text())
-            except Exception as exc:  # noqa: BLE001
-                print(f"  ! {ticker}/{f.name}: {exc}")
-                continue
-            recs = _records_from_json(obj)
-            if not recs:
-                continue
-            df = _canon(pd.json_normalize(recs))
-            if any(c not in df.columns for c in REQUIRED):
-                continue
-            df["ticker"] = ticker
-            if "asof" not in df.columns:
-                df["asof"] = asof
-            if "underlying_close" not in df.columns or df["underlying_close"].isna().all():
-                df["underlying_close"] = eq.get(asof, float("nan"))
-            frames.append(df)
-        if not frames:
-            print(f"  - {ticker}: no usable chains")
+def _load_symbol(src: Path, sym_dir: Path) -> pd.DataFrame | None:
+    """Read + canonicalize every day file for one symbol into a single frame."""
+    ticker = sym_dir.name.upper()
+    eq = _equity_close_map(src, sym_dir.name)
+    frames = []
+    for f in sorted(sym_dir.glob("*.json*")):
+        asof = f.name.split(".")[0]  # "2021-11-10.json.gz" -> "2021-11-10"
+        try:
+            obj = _read_gz_json(f) if f.suffix == ".gz" else json.loads(f.read_text())
+        except Exception:  # noqa: BLE001
             continue
-        out = pd.concat(frames, ignore_index=True)
-        print(f"  + {ticker}: {len(out):,} rows from {len(frames)} days")
-        yield ticker, out
-        if limit and i + 1 >= limit:
-            return
+        recs = _records_from_json(obj)
+        if not recs:
+            continue
+        df = _canon(pd.json_normalize(recs))
+        if any(c not in df.columns for c in REQUIRED):
+            continue
+        df["ticker"] = ticker
+        if "asof" not in df.columns:
+            df["asof"] = asof
+        if "underlying_close" not in df.columns or df["underlying_close"].isna().all():
+            df["underlying_close"] = eq.get(asof, float("nan"))
+        frames.append(df)
+    if not frames:
+        return None
+    return pd.concat(frames, ignore_index=True)
+
+
+def _worker(src_str: str, sym_dir_str: str, out_dir_str: str):
+    """Process one symbol end-to-end (load -> normalize -> write parquet).
+
+    Runs in a separate process; returns (ticker, first, last, nrows) or None.
+    """
+    src, sym_dir, out_dir = Path(src_str), Path(sym_dir_str), Path(out_dir_str)
+    ticker = sym_dir.name.upper()
+    raw = _load_symbol(src, sym_dir)
+    if raw is None or raw.empty:
+        return None
+    df = _normalize(raw)
+    if df.empty:
+        return None
+    df = df.sort_values(["asof", "expiry", "strike"])
+    df.to_parquet(out_dir / f"{ticker}.parquet", index=False)
+    return (ticker, df["asof"].min(), df["asof"].max(), len(df))
 
 
 def _normalize(df: pd.DataFrame) -> pd.DataFrame:
@@ -289,6 +303,10 @@ def main() -> None:
                     help="import only the first N symbols (for a quick test run)")
     ap.add_argument("--delist-gap-days", type=int, default=15,
                     help="gap after which a vanished ticker is marked delisted")
+    ap.add_argument("--workers", type=int, default=None,
+                    help="parallel worker processes (default: min(6, CPU count))")
+    ap.add_argument("--skip-existing", action="store_true",
+                    help="skip symbols already in the store (resume an interrupted run)")
     args = ap.parse_args()
     src = args.src.expanduser()
 
@@ -310,23 +328,54 @@ def main() -> None:
                 f.unlink()
                 print(f"removed sample {f.name}")
 
-    print(f"Importing from {opt_dir} ...\n")
+    sym_dirs = sorted([d for d in opt_dir.iterdir() if d.is_dir()])
+    if args.limit:
+        sym_dirs = sym_dirs[: args.limit]
+
+    tasks, existing = [], []
+    for sd in sym_dirs:
+        out = CHAINS_DIR / f"{sd.name.upper()}.parquet"
+        if args.skip_existing and out.exists():
+            existing.append((sd.name.upper(), out))
+        else:
+            tasks.append(sd)
+
+    workers = args.workers or min(6, os.cpu_count() or 4)
+    print(f"Importing from {opt_dir}\n"
+          f"{len(tasks)} symbol(s) to process, {len(existing)} already present, "
+          f"{workers} workers\n")
+
     spans: dict[str, tuple] = {}
-    global_last = None
-    n = 0
-    for ticker, raw in gather_meridian(src, opt_dir, limit=args.limit):
-        df = _normalize(raw)
-        if df.empty:
-            continue
-        df = df.sort_values(["asof", "expiry", "strike"])
-        df.to_parquet(CHAINS_DIR / f"{ticker}.parquet", index=False)
-        first, last = df["asof"].min(), df["asof"].max()
-        spans[ticker] = (first, last)
-        global_last = last if global_last is None else max(global_last, last)
-        n += 1
+    done = 0
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_worker, str(src), str(sd), str(CHAINS_DIR)): sd.name
+                for sd in tasks}
+        for fut in as_completed(futs):
+            done += 1
+            try:
+                res = fut.result()
+            except Exception as exc:  # noqa: BLE001
+                print(f"  ! {futs[fut]}: {exc}  ({done}/{len(tasks)})")
+                continue
+            if res:
+                tk, first, last, nrows = res
+                spans[tk] = (first, last)
+                print(f"  + {tk}: {nrows:,} rows  ({done}/{len(tasks)})")
+            else:
+                print(f"  - {futs[fut]}: no usable chains  ({done}/{len(tasks)})")
+
+    # fold in already-present tickers (cheap: read only the asof column)
+    for tk, out in existing:
+        try:
+            a = pd.read_parquet(out, columns=["asof"])["asof"]
+            spans[tk] = (a.min(), a.max())
+        except Exception:  # noqa: BLE001
+            pass
 
     if not spans:
         sys.exit("No tickers imported — run with --inspect and send me the output.")
+    global_last = max(last for _, last in spans.values())
+    n = len(spans)
     uni = derive_universe(spans, global_last, args.delist_gap_days)
     uni.to_csv(UNIVERSE_DIR / "universe.csv", index=False)
     delisted = (uni["delisted"].astype(str).str.len() > 0).sum()
