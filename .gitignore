@@ -22,4 +22,5 @@ optionsdesk/.state/
 optionsdesk/data/chains/*.parquet
 optionsdesk/data/chains/*.csv
 optionsdesk/data/universe/universe.csv
+optionsdesk/data/equity/*.parquet
 .env

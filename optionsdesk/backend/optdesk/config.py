@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.getenv("OPTDESK_DATA", ROOT / "data"))
 CHAINS_DIR = DATA_DIR / "chains"
 UNIVERSE_DIR = DATA_DIR / "universe"
+EQUITY_DIR = DATA_DIR / "equity"
 STATE_DIR = Path(os.getenv("OPTDESK_STATE", ROOT / ".state"))
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 

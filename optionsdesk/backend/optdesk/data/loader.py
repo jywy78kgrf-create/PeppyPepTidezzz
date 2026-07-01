@@ -13,7 +13,7 @@ from typing import Iterable, Optional
 
 import pandas as pd
 
-from ..config import CHAINS_DIR, UNIVERSE_DIR
+from ..config import CHAINS_DIR, EQUITY_DIR, UNIVERSE_DIR
 from ..contracts import OptionQuote, OptionType
 
 # accepted aliases -> canonical column
@@ -143,6 +143,9 @@ class ChainStore:
             ))
         return out
 
+    def has_equity(self, ticker: str) -> bool:
+        return (EQUITY_DIR / f"{ticker.upper()}.parquet").exists()
+
     def is_active(self, ticker: str, asof: date) -> bool:
         u = self._universe
         row = u[u["ticker"].str.upper() == ticker.upper()] if not u.empty else u
@@ -154,3 +157,27 @@ class ChainStore:
         if pd.notna(r.get("delisted")) and asof > r["delisted"]:
             return False
         return True
+
+
+class EquityStore:
+    """Reader over the per-ticker equity OHLCV Parquet store (import_equity)."""
+
+    def __init__(self, equity_dir: Path = EQUITY_DIR):
+        self.equity_dir = Path(equity_dir)
+
+    def tickers(self) -> list[str]:
+        return sorted(f.stem.upper() for f in self.equity_dir.glob("*.parquet"))
+
+    @functools.lru_cache(maxsize=128)
+    def ohlcv(self, ticker: str) -> pd.DataFrame:
+        """Daily OHLCV frame indexed by date (ascending)."""
+        f = self.equity_dir / f"{ticker.upper()}.parquet"
+        if not f.exists():
+            raise FileNotFoundError(f"No equity file for {ticker}")
+        df = pd.read_parquet(f)
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+        return df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+
+    def close_series(self, ticker: str) -> pd.Series:
+        df = self.ohlcv(ticker)
+        return pd.Series(df["close"].values, index=df["date"])
