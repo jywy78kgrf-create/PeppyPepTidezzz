@@ -262,3 +262,53 @@ def test_state_persists_across_instances(tmp_path):
     st = pilot2.status()
     assert st["enabled"] is True
     assert len(st["promoted"]) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Quant-critique upgrades: promotion robustness + VRP gate
+# --------------------------------------------------------------------------- #
+def test_promotion_rejected_on_too_few_holdout_trades(tmp_path):
+    def thin_learn(strategy, tickers, start, end):
+        return {"best_params": {}, "holdout": {"score": 2.0, "summary": {
+            "total_return": 0.05, "n_trades": 2, "max_drawdown": -0.02}}}
+    pilot = make_pilot(tmp_path, FakeBroker(), learn=thin_learn)
+    pilot.enable()
+    assert pilot.run_research_batch() is None
+    assert pilot.status()["promoted"] == []
+
+
+def test_promotion_rejected_on_deep_holdout_drawdown(tmp_path):
+    def dd_learn(strategy, tickers, start, end):
+        return {"best_params": {}, "holdout": {"score": 2.0, "summary": {
+            "total_return": 0.05, "n_trades": 20, "max_drawdown": -0.40}}}
+    pilot = make_pilot(tmp_path, FakeBroker(), learn=dd_learn)
+    pilot.enable()
+    assert pilot.run_research_batch() is None
+
+
+def test_promotion_accepts_robust_holdout(tmp_path):
+    def robust_learn(strategy, tickers, start, end):
+        return {"best_params": {}, "holdout": {"score": 1.0, "summary": {
+            "total_return": 0.03, "n_trades": 25, "max_drawdown": -0.06}}}
+    pilot = make_pilot(tmp_path, FakeBroker(), learn=robust_learn)
+    pilot.enable()
+    assert pilot.run_research_batch() is not None
+
+
+def test_vrp_gate_blocks_short_premium_when_negative(tmp_path):
+    """With IV (0.3 in the fake chain) below a forced realized vol, short
+    premium must be skipped; long premium is unaffected."""
+    pilot = make_pilot(tmp_path, FakeBroker())
+    # monkeypatch the vrp helper the pilot imports lazily
+    import optdesk.signals.equity as sig
+    orig = sig.vrp
+    sig.vrp = lambda chain, tk, day, **kw: -0.10
+    try:
+        assert pilot._vrp_ok([], "AAA", date(2026, 6, 1), "bull_put_spread") is False
+        assert pilot._vrp_ok([], "AAA", date(2026, 6, 1), "long_call") is True
+        sig.vrp = lambda chain, tk, day, **kw: 0.08
+        assert pilot._vrp_ok([], "AAA", date(2026, 6, 1), "bull_put_spread") is True
+        sig.vrp = lambda chain, tk, day, **kw: None  # unknowable -> pass-through
+        assert pilot._vrp_ok([], "AAA", date(2026, 6, 1), "short_straddle") is True
+    finally:
+        sig.vrp = orig

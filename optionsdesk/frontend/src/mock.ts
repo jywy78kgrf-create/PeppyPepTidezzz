@@ -631,3 +631,15 @@ export function mockAutoActivity(): AutoActivityEvent[] {
     { ts: new Date(now - 1800e3).toISOString(), kind: 'enable', detail: 'autopilot ENGAGED (kill switch armed)' },
   ]
 }
+
+export function mockPaperGreeks() {
+  const on = book().positions.some((p) => p.status === 'OPEN')
+  return {
+    asof: new Date().toISOString().slice(0, 10),
+    totals: on
+      ? { delta: -42.6, gamma: -1.8, theta: 28.4, vega: -184.2 }
+      : { delta: 0, gamma: 0, theta: 0, vega: 0 },
+    by_ticker: {},
+    unmatched_legs: 0,
+  }
+}

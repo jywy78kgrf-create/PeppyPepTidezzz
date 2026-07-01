@@ -53,7 +53,12 @@ class AutoConfig:
     # promotion bar
     min_holdout_score: float = 0.30      # objective (sortino) on the holdout
     require_positive_holdout_return: bool = True
+    min_holdout_trades: int = 8          # fewer trades = promotion on noise
+    max_holdout_drawdown: float = 0.15   # reject configs that cratered in holdout
     max_promoted: int = 5
+
+    # entry edge: short premium only when implied > realized vol (VRP > 0)
+    require_vrp_for_short_premium: bool = True
 
     # trading guardrails
     max_open_positions: int = 5
@@ -276,13 +281,22 @@ class AutoPilot:
         score = holdout.get("score")
         summary = holdout.get("summary") or {}
         h_return = summary.get("total_return")
+        h_trades = summary.get("n_trades")
+        h_dd = summary.get("max_drawdown")
 
-        ok = (score is not None and score >= self.cfg.min_holdout_score
-              and (not self.cfg.require_positive_holdout_return
-                   or (h_return is not None and h_return > 0)))
-        if not ok:
-            self._log("research", f"{strategy}: holdout score={score} "
-                                  f"return={h_return} — NOT promoted")
+        reasons: list[str] = []
+        if score is None or score < self.cfg.min_holdout_score:
+            reasons.append(f"score={score}")
+        if self.cfg.require_positive_holdout_return and not (
+                h_return is not None and h_return > 0):
+            reasons.append(f"return={h_return}")
+        if h_trades is not None and h_trades < self.cfg.min_holdout_trades:
+            reasons.append(f"trades={h_trades}<{self.cfg.min_holdout_trades}")
+        if h_dd is not None and abs(h_dd) > self.cfg.max_holdout_drawdown:
+            reasons.append(f"maxdd={h_dd}")
+        if reasons:
+            self._log("research", f"{strategy}: NOT promoted "
+                                  f"({', '.join(reasons)})")
             self._save()
             return None
 
@@ -420,6 +434,8 @@ class AutoPilot:
                         continue
                     if gate is not None and not gate.allow(tku, asof, config["strategy"]):
                         continue
+                    if not self._vrp_ok(chain, tku, asof, config["strategy"]):
+                        continue
                     underlying = next((q.underlying for q in chain if q.underlying > 0), 0.0)
                     spec = builder(chain, underlying, dict(config.get("params") or {}))
                     if spec is None:
@@ -513,6 +529,24 @@ class AutoPilot:
                 hours=self.cfg.ticker_cooldown_hr)
         except ValueError:
             return False
+
+    _SHORT_PREMIUM = frozenset({"bull_put_spread", "bear_call_spread",
+                                "iron_condor", "covered_call", "short_straddle"})
+
+    def _vrp_ok(self, chain, ticker: str, asof, strategy: str) -> bool:
+        """Short premium requires a positive volatility risk premium (ATM IV >
+        trailing realized vol). Pass-through when VRP can't be computed or the
+        strategy isn't short premium."""
+        if not self.cfg.require_vrp_for_short_premium:
+            return True
+        if strategy not in self._SHORT_PREMIUM:
+            return True
+        try:
+            from ..signals.equity import vrp
+            v = vrp(chain, ticker, asof)
+        except ImportError:
+            return True
+        return True if v is None else v > 0.0
 
     def _build_gate(self):
         try:

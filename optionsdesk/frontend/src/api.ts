@@ -11,6 +11,7 @@ import type {
   HealthResponse,
   LearnResponse,
   PaperBookResponse,
+  PaperGreeksResponse,
   PaperHistoryResponse,
   Quote,
   SuggestionsResponse,
@@ -158,6 +159,34 @@ export function getPaperHistory(): Promise<PaperHistoryResponse> {
   return withFallback(
     () => request<PaperHistoryResponse>('/api/paper/history'),
     () => mock.mockPaperHistory(),
+  )
+}
+
+/** POST /api/paper/open — send a suggested strategy to the paper book. */
+export function openPaper(body: {
+  ticker: string
+  strategy: string
+  date: string
+  qty?: number
+}): Promise<{ ok: boolean }> {
+  return withFallback(
+    () =>
+      request<unknown>('/api/paper/open', {
+        method: 'POST',
+        body: JSON.stringify({ qty: 1, ...body }),
+      }).then(() => ({ ok: true })),
+    () => {
+      mock.mockPaperMark() // nudge the demo book so something visibly changes
+      return { ok: true }
+    },
+  )
+}
+
+/** GET /api/paper/greeks — aggregate greeks of the open paper book. */
+export function getPaperGreeks(): Promise<PaperGreeksResponse> {
+  return withFallback(
+    () => request<PaperGreeksResponse>('/api/paper/greeks'),
+    () => mock.mockPaperGreeks(),
   )
 }
 

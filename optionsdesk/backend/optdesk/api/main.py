@@ -466,6 +466,58 @@ def paper_close(req: PaperCloseRequest) -> dict:
     return {"position": serialize(pos), "equity": pb.equity()}
 
 
+@app.get("/api/paper/greeks")
+def paper_greeks() -> dict:
+    """Aggregate greeks of the OPEN paper book, marked off each ticker's latest
+    chain. Delta is share-equivalent (delta x 100 x contracts, signed); theta
+    is $/day; vega is $ per vol point. The book-level view a desk actually
+    watches — you can be short vega five different ways and not know it
+    position-by-position."""
+    from datetime import date as _date
+
+    pb = _paper()
+    s = store()
+    totals = {"delta": 0.0, "gamma": 0.0, "theta": 0.0, "vega": 0.0}
+    by_ticker: dict[str, dict] = {}
+    unmatched = 0
+
+    for pos in pb.positions():
+        if pos.status != "OPEN":
+            continue
+        tk = pos.ticker.upper()
+        try:
+            dates = s.trading_dates(tk)
+            chain = s.chain(tk, dates[-1]) if dates else []
+        except FileNotFoundError:
+            chain = []
+        lookup = {(q.kind.value, round(q.strike, 4), q.expiry.isoformat()): q
+                  for q in chain}
+        row = by_ticker.setdefault(tk, {"delta": 0.0, "gamma": 0.0,
+                                        "theta": 0.0, "vega": 0.0})
+        for leg in pos.legs:
+            q = lookup.get((leg["kind"], round(float(leg["strike"]), 4),
+                            str(leg["expiry"])[:10]))
+            if q is None:
+                unmatched += 1
+                continue
+            sign = -1.0 if leg["action"] == "SELL" else 1.0
+            mult = sign * int(leg["quantity"]) * 100.0
+            row["delta"] += q.delta * mult
+            row["gamma"] += q.gamma * mult
+            row["theta"] += q.theta * mult
+            row["vega"] += q.vega * mult
+        for k in totals:
+            totals[k] += row[k]
+
+    return serialize({
+        "asof": _date.today().isoformat(),
+        "totals": {k: round(v, 2) for k, v in totals.items()},
+        "by_ticker": {t: {k: round(v, 2) for k, v in row.items()}
+                      for t, row in by_ticker.items()},
+        "unmatched_legs": unmatched,
+    })
+
+
 # --------------------------------------------------------------------------- #
 # AutoPilot — autonomous research/promote/paper-trade loop (paper ONLY)
 # --------------------------------------------------------------------------- #

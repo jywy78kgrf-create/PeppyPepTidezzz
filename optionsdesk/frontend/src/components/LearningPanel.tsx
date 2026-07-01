@@ -13,8 +13,8 @@ import {
   ZAxis,
 } from 'recharts'
 import { postLearn } from '../api'
-import * as mock from '../mock'
 import type { HoldoutInfo, LearnIteration, Regimes } from '../types'
+import { STRATEGY_NAMES } from '../types'
 import { num, pct } from '../lib/format'
 
 interface Pt {
@@ -137,65 +137,51 @@ export default function LearningPanel() {
   const [flash, setFlash] = useState(false)
   const histRef = useRef<LearnIteration[]>([])
 
-  // seed from backend/mock, then stream new iterations live
-  useEffect(() => {
-    let stopped = false
+  // run controls — every number on this panel comes from a real learn run
+  // (backend or the mock layer when offline); nothing is synthesized on a
+  // timer, so what you see is what the optimizer actually did.
+  const [strategy, setStrategy] = useState('bull_put_spread')
+  const [tickersInput, setTickersInput] = useState('SPY,QQQ,NVDA')
+  const [nIter, setNIter] = useState(12)
+  const [running, setRunning] = useState(false)
+
+  const runLearn = () => {
+    if (running) return
+    setRunning(true)
     postLearn({
-      strategy: 'bull_put_spread',
-      tickers: ['SPY', 'QQQ', 'NVDA'],
+      strategy,
+      tickers: tickersInput.split(',').map((t) => t.trim().toUpperCase()).filter(Boolean),
       start: '2023-01-03',
       end: '2025-01-03',
-      n_iter: 40,
-    }).then((r) => {
-      if (stopped) return
-      const hist = r.history ?? []
-      histRef.current = hist
-      setHistory(hist)
-      let running = 0
-      let bestIter = 0
-      const pts: Pt[] = hist.map((h) => {
-        if (h.oos_score > running) {
-          running = h.oos_score
-          bestIter = h.iteration
-        }
-        return { iteration: h.iteration, oos_score: h.oos_score, best: running, accepted: h.accepted }
-      })
-      setSeries(pts)
-      setBest({ score: running, params: r.best_params ?? {}, iter: bestIter })
-      setHoldout(r.holdout ?? null)
-      setRegimes(r.regimes ?? null)
+      n_iter: nIter,
     })
-    return () => {
-      stopped = true
-    }
-  }, [])
-
-  // live streaming of new iterations
-  useEffect(() => {
-    const id = setInterval(() => {
-      setSeries((prev) => {
-        if (!prev.length) return prev
-        const prevIter = histRef.current[histRef.current.length - 1]
-        const runningBest = prev[prev.length - 1].best
-        const next = mock.mockNextIteration(prevIter, runningBest)
-        histRef.current = [...histRef.current, next].slice(-120)
-        setHistory(histRef.current)
-        const newBest = Math.max(runningBest, next.oos_score)
-        if (next.accepted) {
-          setBest({ score: next.oos_score, params: next.params, iter: next.iteration })
-          setFlash(true)
-          setTimeout(() => setFlash(false), 700)
-        }
-        const pt: Pt = {
-          iteration: next.iteration,
-          oos_score: next.oos_score,
-          best: newBest,
-          accepted: next.accepted,
-        }
-        return [...prev, pt].slice(-80)
+      .then((r) => {
+        const hist = r.history ?? []
+        histRef.current = hist
+        setHistory(hist)
+        let run = 0
+        let bestIter = 0
+        const pts: Pt[] = hist.map((h) => {
+          if (h.oos_score > run) {
+            run = h.oos_score
+            bestIter = h.iteration
+          }
+          return { iteration: h.iteration, oos_score: h.oos_score, best: run, accepted: h.accepted }
+        })
+        setSeries(pts)
+        setBest({ score: run, params: r.best_params ?? {}, iter: bestIter })
+        setHoldout(r.holdout ?? null)
+        setRegimes(r.regimes ?? null)
+        setFlash(true)
+        setTimeout(() => setFlash(false), 700)
       })
-    }, 2200)
-    return () => clearInterval(id)
+      .finally(() => setRunning(false))
+  }
+
+  // one real run on mount so the panel isn't empty
+  useEffect(() => {
+    runLearn()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const accepted = series.filter((p) => p.accepted)
@@ -225,6 +211,34 @@ export default function LearningPanel() {
           <span className="num text-[10px] text-[var(--color-ink-faint)]">
             {acceptCount} accepted
           </span>
+          {/* run controls */}
+          <select
+            value={strategy}
+            onChange={(e) => setStrategy(e.target.value)}
+            className="num rounded-md border border-[var(--color-edge)] bg-[var(--color-panel-2)] px-1.5 py-0.5 text-[10px] text-[var(--color-ink-dim)] outline-none focus:border-[var(--color-iris)]"
+          >
+            {STRATEGY_NAMES.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+          <input
+            value={tickersInput}
+            onChange={(e) => setTickersInput(e.target.value)}
+            className="num w-[110px] rounded-md border border-[var(--color-edge)] bg-[var(--color-panel-2)] px-1.5 py-0.5 text-[10px] text-[var(--color-ink-dim)] outline-none focus:border-[var(--color-iris)]"
+            title="Comma-separated tickers"
+          />
+          <input
+            type="number"
+            min={2}
+            max={60}
+            value={nIter}
+            onChange={(e) => setNIter(Math.max(2, Math.min(60, Number(e.target.value) || 12)))}
+            className="num w-[46px] rounded-md border border-[var(--color-edge)] bg-[var(--color-panel-2)] px-1.5 py-0.5 text-[10px] text-[var(--color-ink-dim)] outline-none focus:border-[var(--color-iris)]"
+            title="Iterations"
+          />
+          <button onClick={runLearn} disabled={running} className="btn px-2.5 py-0.5 text-[10px]">
+            {running ? 'Learning…' : 'Run'}
+          </button>
         </div>
       </header>
       <div className="hairline mx-3 shrink-0" />

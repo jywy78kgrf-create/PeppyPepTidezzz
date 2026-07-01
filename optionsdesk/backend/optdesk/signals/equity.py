@@ -241,3 +241,49 @@ def build_default_gate(tickers: list[str], params: Optional[dict] = None,
     if not any(_has_equity(store, tk) for tk in tks):
         return None
     return SignalGate(tks, params, equity_store=store)
+
+
+# --------------------------------------------------------------------------- #
+# Volatility risk premium (VRP) — the classic options edge test
+# --------------------------------------------------------------------------- #
+def chain_atm_iv(chain, underlying: float | None = None) -> float | None:
+    """Best-effort ATM implied vol from a chain snapshot (nearest-the-money
+    quotes with a positive IV, averaged across the closest expiry's C/P)."""
+    if not chain:
+        return None
+    u = underlying or next((q.underlying for q in chain if q.underlying > 0), 0.0)
+    if u <= 0:
+        return None
+    live = [q for q in chain if q.iv > 0 and (q.bid > 0 or q.last > 0)]
+    if not live:
+        return None
+    nearest_exp = min(q.expiry for q in live)
+    near = [q for q in live if q.expiry == nearest_exp]
+    near.sort(key=lambda q: abs(q.strike - u))
+    picks = near[:4]  # a couple of strikes either side of the money
+    return float(np.mean([q.iv for q in picks])) if picks else None
+
+
+def vrp(chain, ticker: str, day, *, underlying: float | None = None,
+        equity_store: Optional[EquityStore] = None) -> float | None:
+    """Volatility risk premium: ATM implied vol minus trailing 20d realized
+    vol (annualised, as of ``day`` using data through the prior session).
+
+    Positive VRP means options are priced richer than the underlying has
+    actually been moving — the statistical precondition for selling premium.
+    Returns None when either side can't be computed (caller decides policy).
+    """
+    iv = chain_atm_iv(chain, underlying)
+    if iv is None:
+        return None
+    store = equity_store if equity_store is not None else EquityStore()
+    if not _has_equity(store, ticker):
+        return None
+    frame = indicator_frame(ticker, equity_store=store)
+    prior = frame[frame["date"] < day]
+    if prior.empty:
+        return None
+    rv = prior["rv20"].iloc[-1]
+    if rv is None or not np.isfinite(rv) or rv <= 0:
+        return None
+    return float(iv - rv)

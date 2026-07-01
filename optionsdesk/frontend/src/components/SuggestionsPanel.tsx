@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { getSuggestions, getUniverse } from '../api'
+import { getSuggestions, getUniverse, openPaper } from '../api'
 import type { Suggestion } from '../types'
 import Panel from './Panel'
 import { usd } from '../lib/format'
@@ -35,7 +35,23 @@ function ScoreRing({ score }: { score: number }) {
   )
 }
 
-function Card({ s, i }: { s: Suggestion; i: number }) {
+function Card({ s, i, asof }: { s: Suggestion; i: number; asof: string }) {
+  const [sent, setSent] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle')
+
+  const sendToPaper = async () => {
+    if (sent === 'sending' || sent === 'sent') return
+    setSent('sending')
+    try {
+      const r = await openPaper({
+        ticker: s.ticker,
+        strategy: s.name,
+        date: asof.slice(0, 10),
+      })
+      setSent(r.ok ? 'sent' : 'failed')
+    } catch {
+      setSent('failed')
+    }
+  }
   // max_profit is null when unlimited (e.g. a long call), max_loss < 0 when
   // the downside is undefined (naked short premium).
   const unlimitedProfit = s.max_profit == null || !Number.isFinite(s.max_profit)
@@ -83,12 +99,28 @@ function Card({ s, i }: { s: Suggestion; i: number }) {
         />
       </div>
 
-      <div className="mt-2.5 flex flex-wrap gap-1.5">
+      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
         {s.tags.map((t) => (
           <span key={t} className="tag">
             {t}
           </span>
         ))}
+        {/* send this exact structure to the paper book (1 lot) */}
+        <button
+          onClick={sendToPaper}
+          disabled={sent === 'sending' || sent === 'sent'}
+          className="btn ml-auto px-2 py-0.5 text-[9.5px]"
+          style={
+            sent === 'sent'
+              ? { color: 'var(--color-up)', borderColor: 'color-mix(in srgb, var(--color-up) 45%, transparent)' }
+              : sent === 'failed'
+                ? { color: 'var(--color-down)' }
+                : undefined
+          }
+          title="Open 1 lot of this structure in the paper book"
+        >
+          {sent === 'sent' ? '✓ In Paper' : sent === 'sending' ? 'Sending…' : sent === 'failed' ? 'Retry → Paper' : '→ Paper'}
+        </button>
       </div>
     </motion.article>
   )
@@ -109,6 +141,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone: 'tea
 
 export default function SuggestionsPanel({ className }: { className?: string }) {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
+  const [asof, setAsof] = useState('')
   const [universe, setUniverse] = useState<string[]>([])
   const [ticker, setTicker] = useState('ALL')
   const [loading, setLoading] = useState(true)
@@ -121,6 +154,7 @@ export default function SuggestionsPanel({ className }: { className?: string }) 
     setLoading(true)
     getSuggestions(ticker, undefined, 6).then((r) => {
       setSuggestions(r.suggestions)
+      setAsof(r.asof ?? '')
       setLoading(false)
     })
   }, [ticker])
@@ -153,7 +187,9 @@ export default function SuggestionsPanel({ className }: { className?: string }) 
                   className="h-24 animate-pulse rounded-xl border border-[var(--color-edge-soft)] bg-[var(--color-panel-2)]/40"
                 />
               ))
-            : suggestions.map((s, i) => <Card key={`${s.name}-${s.ticker}`} s={s} i={i} />)}
+            : suggestions.map((s, i) => (
+                <Card key={`${s.name}-${s.ticker}`} s={s} i={i} asof={asof} />
+              ))}
         </AnimatePresence>
       </div>
     </Panel>

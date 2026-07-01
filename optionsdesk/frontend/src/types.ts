@@ -193,6 +193,15 @@ export interface PaperHistoryResponse {
   points: PaperHistoryPoint[]
 }
 
+/** GET /api/paper/greeks — book-level exposure. Delta is share-equivalent;
+ *  theta $/day; vega $ per vol point. */
+export interface PaperGreeksResponse {
+  asof: string
+  totals: { delta: number; gamma: number; theta: number; vega: number }
+  by_ticker: Record<string, { delta: number; gamma: number; theta: number; vega: number }>
+  unmatched_legs: number
+}
+
 /* --------------------------------------------------------------------- */
 /*  AutoPilot                                                             */
 /* --------------------------------------------------------------------- */

@@ -14,6 +14,7 @@ import {
   getAutoActivity,
   getAutoStatus,
   getPaperBook,
+  getPaperGreeks,
   getPaperHistory,
   postAutoDisable,
   postAutoEnable,
@@ -23,6 +24,7 @@ import type {
   AutoActivityEvent,
   AutoStatus,
   PaperBookResponse,
+  PaperGreeksResponse,
   PaperHistoryPoint,
   PaperPosition,
 } from '../types'
@@ -268,11 +270,13 @@ function AutoPilotConsole() {
 export default function PaperPanel({ className }: { className?: string }) {
   const [book, setBook] = useState<PaperBookResponse | null>(null)
   const [history, setHistory] = useState<PaperHistoryPoint[]>([])
+  const [greeks, setGreeks] = useState<PaperGreeksResponse | null>(null)
   const [closing, setClosing] = useState<number | null>(null)
   const timer = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const refreshHistory = useCallback(() => {
     getPaperHistory().then((h) => setHistory(h.points))
+    getPaperGreeks().then(setGreeks)
   }, [])
 
   const mark = useCallback(() => {
@@ -425,6 +429,42 @@ export default function PaperPanel({ className }: { className?: string }) {
             )}
           </div>
         </div>
+
+        {/* book-level greeks — aggregate exposure across every open leg */}
+        {greeks && (
+          <div className="flex items-center justify-between rounded-lg border border-[var(--color-edge-soft)] bg-[var(--color-void)]/40 px-2.5 py-1">
+            <span className="text-[8.5px] uppercase tracking-[0.14em] text-[var(--color-ink-faint)]">
+              Book Greeks
+            </span>
+            <div className="num flex gap-3 text-[10.5px]">
+              {(
+                [
+                  ['Δ', greeks.totals.delta, 'share-equivalent delta'],
+                  ['Γ', greeks.totals.gamma, 'gamma'],
+                  ['Θ', greeks.totals.theta, '$ per day'],
+                  ['V', greeks.totals.vega, '$ per vol point'],
+                ] as const
+              ).map(([sym, v, tip]) => (
+                <span key={sym} title={tip}>
+                  <span className="text-[var(--color-ink-faint)]">{sym} </span>
+                  <span
+                    style={{
+                      color:
+                        v === 0
+                          ? 'var(--color-ink-dim)'
+                          : v > 0
+                            ? 'var(--color-up)'
+                            : 'var(--color-down)',
+                    }}
+                  >
+                    {v > 0 ? '+' : ''}
+                    {v.toFixed(1)}
+                  </span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="hairline" />
 
