@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { getBrokerStatus, getHealth, onSourceChange } from '../api'
+import { getBrokerStatus, getHealth, getPaperBook, getPaperHistory, onSourceChange } from '../api'
 import type { BrokerStatus } from '../types'
 import { usd } from '../lib/format'
 
@@ -76,22 +76,32 @@ function AnimatedEquity({ value }: { value: number }) {
 export default function HeaderBar() {
   const [brokers, setBrokers] = useState<BrokerStatus[]>([])
   const [live, setLive] = useState<boolean | null>(null)
-  const [equity, setEquity] = useState(248932.4)
-  const [dayPnl] = useState(3418.22)
+  const [equity, setEquity] = useState<number | null>(null)
+  const [dayPnl, setDayPnl] = useState<number | null>(null)
 
   useEffect(() => {
     getHealth()
-    getBrokerStatus().then(setBrokers)
+
+    // Real account figures from the paper book: total equity, and day P&L as
+    // the change since the first history point on the current calendar day.
+    const refresh = () => {
+      getBrokerStatus().then(setBrokers)
+      getPaperBook().then((book) => setEquity(book.equity.total))
+      getPaperHistory().then((h) => {
+        const pts = h.points
+        if (pts.length === 0) return setDayPnl(0)
+        const today = new Date().toDateString()
+        const first =
+          pts.find((p) => new Date(p.ts).toDateString() === today) ?? pts[0]
+        setDayPnl(pts[pts.length - 1].equity - first.equity)
+      })
+    }
+    refresh()
     const off = onSourceChange(setLive)
-    const poll = setInterval(() => getBrokerStatus().then(setBrokers), 8000)
-    // gentle equity drift to feel live
-    const drift = setInterval(() => {
-      setEquity((e) => e + (Math.random() - 0.45) * 320)
-    }, 3200)
+    const poll = setInterval(refresh, 15000)
     return () => {
       off()
       clearInterval(poll)
-      clearInterval(drift)
     }
   }, [])
 
@@ -142,16 +152,26 @@ export default function HeaderBar() {
       <div className="flex items-center gap-7">
         <div className="hidden flex-col items-end leading-tight md:flex">
           <span className="panel-title">Account Equity</span>
-          <AnimatedEquity value={equity} />
+          {equity === null ? (
+            <span className="num text-[19px] font-semibold text-[var(--color-ink-faint)]">—</span>
+          ) : (
+            <AnimatedEquity value={equity} />
+          )}
         </div>
         <div className="hidden flex-col items-end leading-tight lg:flex">
           <span className="panel-title">Day P&L</span>
           <span
             className="num text-[15px] font-semibold"
-            style={{ color: dayPnl >= 0 ? 'var(--color-up)' : 'var(--color-down)' }}
+            style={{
+              color:
+                dayPnl === null
+                  ? 'var(--color-ink-faint)'
+                  : dayPnl >= 0
+                    ? 'var(--color-up)'
+                    : 'var(--color-down)',
+            }}
           >
-            {dayPnl >= 0 ? '+' : ''}
-            {usd(dayPnl)}
+            {dayPnl === null ? '—' : `${dayPnl >= 0 ? '+' : ''}${usd(dayPnl)}`}
           </span>
         </div>
 

@@ -130,15 +130,49 @@ def universe() -> dict:
 # --------------------------------------------------------------------------- #
 # Suggestions
 # --------------------------------------------------------------------------- #
+# when scanning the whole universe, cap how many names we touch so the endpoint
+# stays responsive (each name = one chain read + suggest).
+_SUGGEST_SCAN_CAP = 60
+
+
 @app.get("/api/suggestions")
 def suggestions(
-    ticker: str = Query(...),
-    date: str | None = Query(None, description="defaults to latest trading date for the ticker"),
-    top_k: int = Query(5, ge=1, le=25),
+    ticker: str | None = Query(None, description="a ticker, or omit / 'ALL' to scan the universe"),
+    date: str | None = Query(None, description="defaults to latest trading date"),
+    top_k: int = Query(6, ge=1, le=25),
 ) -> dict:
     from ..strategies.suggester import StrategySuggester
 
     s = store()
+    suggester = StrategySuggester(SETTINGS)
+
+    # ---- whole-universe scan (default / "ALL"): best ideas across all names ---
+    if not ticker or ticker.upper() == "ALL":
+        universe = s.tickers()[:_SUGGEST_SCAN_CAP]
+        pooled: list = []
+        latest = None
+        for tk in universe:
+            try:
+                dates = s.trading_dates(tk)
+                if not dates:
+                    continue
+                asof = _parse_date(date) if date else dates[-1]
+                chain = s.chain(tk, asof)
+                if not chain:
+                    continue
+                pooled.extend(suggester.suggest(chain, asof, top_k=2))
+                latest = asof if latest is None else max(latest, asof)
+            except Exception:  # noqa: BLE001 - one bad name can't sink the scan
+                continue
+        pooled.sort(key=lambda sp: sp.score, reverse=True)
+        return {
+            "asof": latest.isoformat() if latest else "",
+            "ticker": "ALL",
+            "scanned": len(universe),
+            "suggestions": [serialize(sp) for sp in pooled[:top_k]],
+        }
+
+    # ---- single ticker -------------------------------------------------------
     if date:
         asof = _parse_date(date)
     else:
@@ -149,7 +183,7 @@ def suggestions(
     chain = s.chain(ticker, asof)
     if not chain:
         raise HTTPException(404, f"no chain for {ticker} on {asof.isoformat()}")
-    specs = StrategySuggester(SETTINGS).suggest(chain, asof, top_k=top_k)
+    specs = suggester.suggest(chain, asof, top_k=top_k)
     return {
         "asof": asof.isoformat(),
         "ticker": ticker.upper(),

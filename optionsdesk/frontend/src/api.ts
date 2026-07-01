@@ -35,11 +35,14 @@ function setSource(live: boolean) {
   }
 }
 
-const TIMEOUT_MS = 2500
+// Short timeout for polling/status endpoints; heavy compute (universe scan,
+// backtest, learn) needs much longer or it aborts to mock on real data.
+const TIMEOUT_FAST = 3000
+const TIMEOUT_HEAVY = 90000
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, timeoutMs = TIMEOUT_FAST): Promise<T> {
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
     const res = await fetch(`${BASE}${path}`, {
       ...init,
@@ -92,7 +95,7 @@ export function getSuggestions(
   if (date) qs.set('date', date)
   qs.set('top_k', String(topK))
   return withFallback(
-    () => request<SuggestionsResponse>(`/api/suggestions?${qs.toString()}`),
+    () => request<SuggestionsResponse>(`/api/suggestions?${qs.toString()}`, undefined, TIMEOUT_HEAVY),
     () => mock.mockSuggestions(ticker, topK),
   )
 }
@@ -109,7 +112,7 @@ export interface BacktestRequest {
 
 export function postBacktest(body: BacktestRequest): Promise<BacktestResponse> {
   return withFallback(
-    () => request<BacktestResponse>('/api/backtest', { method: 'POST', body: JSON.stringify(body) }),
+    () => request<BacktestResponse>('/api/backtest', { method: 'POST', body: JSON.stringify(body) }, TIMEOUT_HEAVY),
     () => mock.mockBacktest(body),
   )
 }
@@ -125,7 +128,7 @@ export interface LearnRequest {
 
 export function postLearn(body: LearnRequest): Promise<LearnResponse> {
   return withFallback(
-    () => request<LearnResponse>('/api/learn', { method: 'POST', body: JSON.stringify(body) }),
+    () => request<LearnResponse>('/api/learn', { method: 'POST', body: JSON.stringify(body) }, TIMEOUT_HEAVY),
     () => mock.mockLearnHistory(body.n_iter),
   )
 }
