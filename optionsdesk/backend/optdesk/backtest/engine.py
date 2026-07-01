@@ -6,6 +6,24 @@ manages each to a profit-target / stop-loss / close-DTE / expiry exit, marks
 equity daily, and applies a realistic cost model (spread crossing, per-leg/side
 commissions + exchange fees, and daily cost-of-carry on capital held).
 
+Realism semantics:
+
+* ``fill_lag`` (default 1): a signal computed on day D queues and fills on the
+  next trading day for that ticker at *that* day's quotes (legs re-located by
+  strike/expiry; the signal is abandoned if any leg is unquotable or the
+  structure has dropped below ``min_dte_to_open``). ``fill_lag=0`` preserves
+  same-day fills.
+* Early assignment: any SHORT leg that is ITM with per-share extrinsic value
+  (market mid minus intrinsic) below ``assign_extrinsic`` closes the whole
+  position with reason ``"assigned"`` — the assigned leg settles at intrinsic,
+  remaining legs at market — charging ``CostModel.assignment_fee`` per contract.
+* Capital at risk for credit structures = max(modelled max_loss, Reg-T-style
+  ``margin_requirement`` at open) — see :mod:`optdesk.backtest.portfolio`.
+* Optional signal gate: when ``use_signals`` (default True) and
+  ``optdesk.signals.equity`` is importable, ``build_default_gate`` can veto
+  signal generation per (ticker, day, strategy name). The module is imported
+  lazily and its absence is never an error.
+
 Survivorship is handled explicitly: delisted tickers are *included*, and when
 ``store.is_active`` flips False a position is force-closed at intrinsic value
 with reason ``"delisted"``. The resulting :class:`BacktestMetrics` records the
@@ -14,11 +32,13 @@ universe size, how many delisted names were traded, and a survivorship note.
 from __future__ import annotations
 
 import math
-from dataclasses import replace
+from collections import Counter
+from dataclasses import dataclass, replace
 from datetime import date
 
 from ..config import SETTINGS
 from ..contracts import (
+    Action,
     BacktestMetrics,
     BacktestResult,
     CostModel,
@@ -28,6 +48,7 @@ from ..contracts import (
     Trade,
 )
 from ..data.loader import ChainStore
+from ..quant.pricing import find_quote, intrinsic
 from ..risk import PositionSizer, RiskBudget, RiskConfig, unit_risk_for
 from ..strategies.library import STRATEGIES
 from .portfolio import OpenPosition, Portfolio
@@ -42,7 +63,19 @@ _RUN_DEFAULTS: dict = {
     "max_concurrent": 5,      # cap open positions across the whole book
     "signal_cooldown": 5,     # min trading days between new signals per ticker
     "min_dte_to_open": 14,    # don't open a structure with too little time
+    "fill_lag": 1,            # trading days between signal and fill (0 = same day)
+    "assign_extrinsic": 0.03,  # short ITM legs with extrinsic below this assign
+    "use_signals": True,      # consult the optional signal gate when available
 }
+
+
+@dataclass(slots=True)
+class _PendingSignal:
+    """A signal awaiting its T+``fill_lag`` fill (fill_lag >= 1)."""
+    spec: StrategySpec
+    ticker: str
+    signal_day: date
+    lag_remaining: int
 
 
 class Backtester:
@@ -85,6 +118,19 @@ class Backtester:
         capital = float(capital if capital is not None else self.settings.starting_capital)
         pf = Portfolio(capital, self.cost, self.r, max_concurrent=cfg["max_concurrent"])
 
+        # Optional signal gate (lazy import — the module may not exist).
+        gate = None
+        if cfg.get("use_signals", True):
+            try:
+                from ..signals.equity import build_default_gate
+            except ImportError:
+                gate = None
+            else:
+                gate = build_default_gate(tickers, cfg)  # may return None
+
+        fill_lag = max(0, int(cfg.get("fill_lag", 1)))
+        pending: list[_PendingSignal] = []
+
         # Union of trading dates across the (survivorship-complete) universe.
         all_dates = self._calendar(tickers, start, end)
         delisted_set = {t.upper() for t in self.store.delisted_tickers()}
@@ -114,22 +160,60 @@ class Backtester:
                              underlying=last_underlying.get(
                                  tk, pos.spec.meta.get("underlying")))
 
-            # 2) Accrue carry and evaluate managed exits on survivors.
+            # 2) Accrue carry, check early assignment, evaluate managed exits.
             for pos in list(pf.open_positions):
                 tk = pos.spec.ticker
                 chain = chains.get(tk, [])
                 pf.accrue_carry(pos, day)
-                reason = self._exit_reason(pos, chain, day, cfg,
-                                           last_u=last_underlying.get(tk))
+                u = last_underlying.get(tk)
+                reason = self._exit_reason(pos, chain, day, cfg, last_u=u)
+                if reason != "expiry":
+                    # Early assignment preempts managed exits (it is involuntary)
+                    # but not expiry settlement, which is intrinsic anyway.
+                    assigned = self._assignable_legs(pos, chain, u,
+                                                     cfg["assign_extrinsic"])
+                    if assigned:
+                        keys = frozenset((l.kind, l.strike, l.expiry)
+                                         for l in assigned)
+                        n_contracts = sum(l.quantity for l in assigned)
+                        pf.close(pos, chain, day, reason="assigned",
+                                 intrinsic_legs=keys,
+                                 assign_fee_contracts=n_contracts, underlying=u)
+                        continue
                 if reason is not None:
                     at_intrinsic = reason == "expiry"
                     pf.close(pos, chain, day, reason=reason, at_intrinsic=at_intrinsic,
-                             underlying=last_underlying.get(tk))
+                             underlying=u)
 
-            # 3) Generate new signals (one per ticker per cooldown window).
+            # 3) Fill queued signals (fill_lag >= 1) at TODAY's quotes.
+            if pending:
+                cur_equity = pf.equity(chains, day, underlyings=last_underlying)
+                still_pending: list[_PendingSignal] = []
+                for pnd in pending:
+                    tk = pnd.ticker
+                    if not self.store.is_active(tk, day):
+                        continue  # abandoned: ticker went inactive while queued
+                    chain = chains.get(tk) or []
+                    if not chain or day <= pnd.signal_day:
+                        still_pending.append(pnd)  # not a trading day for tk yet
+                        continue
+                    pnd.lag_remaining -= 1
+                    if pnd.lag_remaining > 0:
+                        still_pending.append(pnd)
+                        continue
+                    # Consume the signal (fill or abandon — never retried).
+                    opened = self._size_and_open(
+                        pf, pnd.spec, chain, day, cfg, sizer, budget, rc,
+                        cur_equity, signal_day=pnd.signal_day)
+                    if opened is not None and tk.upper() in delisted_set:
+                        delisted_traded.add(tk.upper())
+                pending = still_pending
+
+            # 4) Generate new signals (one per ticker per cooldown window).
             cur_equity = pf.equity(chains, day, underlyings=last_underlying)
+            pending_tickers = {p.ticker for p in pending}
             for tk in tickers:
-                if not pf.can_open():
+                if len(pf.open_positions) + len(pending) >= cfg["max_concurrent"]:
                     break
                 if not self.store.is_active(tk, day):
                     continue
@@ -139,31 +223,38 @@ class Backtester:
                 last = last_signal.get(tk)
                 if last is not None and (day - last).days < cfg["signal_cooldown"]:
                     continue
-                if any(p.spec.ticker == tk for p in pf.open_positions):
+                if tk in pending_tickers or any(
+                        p.spec.ticker == tk for p in pf.open_positions):
+                    continue
+                if gate is not None and not gate.allow(tk, day, strategy_name):
                     continue
                 spec = self._build(builder, chain, params or {}, cfg)
                 if spec is None:
                     continue
-                # Size the position to the risk budget, then scale the legs.
-                unit_risk = unit_risk_for(spec, cur_equity, rc)
-                desired = sizer.desired_contracts(spec, cur_equity, unit_risk)
-                qty = budget.fit(spec, desired, unit_risk, cur_equity, pf.open_positions)
-                if qty < 1:
+                if fill_lag >= 1:
+                    # Queue: fills on the ticker's fill_lag-th next trading day.
+                    pending.append(_PendingSignal(spec=spec, ticker=tk,
+                                                  signal_day=day,
+                                                  lag_remaining=fill_lag))
+                    pending_tickers.add(tk)
+                    last_signal[tk] = day
                     continue
-                spec = _scale_spec(spec, qty, unit_risk)
-                opened = pf.open(spec, chain, day, cfg["profit_target"], cfg["stop_mult"])
+                opened = self._size_and_open(pf, spec, chain, day, cfg, sizer,
+                                             budget, rc, cur_equity)
                 if opened is not None:
                     last_signal[tk] = day
                     if tk.upper() in delisted_set:
                         delisted_traded.add(tk.upper())
 
-            # 4) Mark equity for the day.
+            # 5) Mark equity for the day.
             eq = pf.equity(chains, day, underlyings=last_underlying)
             equity_curve.append(EquityPoint(asof=day, equity=round(eq, 2),
                                             cash=round(pf.cash, 2),
                                             open_positions=len(pf.open_positions)))
 
-        # 5) Final liquidation at the last date's intrinsic for anything still open.
+        # 6) Final liquidation at the last date's intrinsic for anything still
+        #    open. Signals still queued (e.g. from the last trading day) never
+        #    fill — they are dropped, not force-filled.
         if all_dates:
             last_day = all_dates[-1]
             chains = self._chains_on(tickers, last_day)
@@ -237,6 +328,70 @@ class Backtester:
         if min_dte < cfg["min_dte_to_open"]:
             return None
         return spec
+
+    def _size_and_open(self, pf: Portfolio, spec: StrategySpec,
+                       chain: list[OptionQuote], day: date, cfg: dict,
+                       sizer: PositionSizer, budget: RiskBudget, rc: RiskConfig,
+                       cur_equity: float, *,
+                       signal_day: date | None = None) -> OpenPosition | None:
+        """Size ``spec`` to the risk budget and open it at ``day``'s quotes.
+
+        For lagged fills (``signal_day`` set) the legs are re-located on
+        today's chain by strike/expiry, and the signal is abandoned (None) when
+        any leg is unquotable, the structure has decayed below
+        ``min_dte_to_open``, the book is full, or the ticker already holds a
+        position.
+        """
+        tk = spec.ticker
+        if not pf.can_open():
+            return None
+        if any(p.spec.ticker == tk for p in pf.open_positions):
+            return None
+        if signal_day is not None:
+            # Re-validate the (stale) signal against today's market.
+            min_dte = min((l.expiry - day).days for l in spec.legs)
+            if min_dte < cfg["min_dte_to_open"]:
+                return None
+            for leg in spec.legs:
+                lq = find_quote(chain, leg.kind, leg.strike, leg.expiry)
+                if lq is None or (lq.mid <= 0 and lq.last <= 0):
+                    return None  # leg no longer quotable -> abandon
+            spec.asof = day
+            u = _underlying(chain)
+            spec.meta = {**spec.meta, "signal_date": signal_day.isoformat()}
+            if u > 0:
+                spec.meta["underlying"] = round(u, 4)
+        unit_risk = unit_risk_for(spec, cur_equity, rc)
+        desired = sizer.desired_contracts(spec, cur_equity, unit_risk)
+        qty = budget.fit(spec, desired, unit_risk, cur_equity, pf.open_positions)
+        if qty < 1:
+            return None
+        spec = _scale_spec(spec, qty, unit_risk)
+        return pf.open(spec, chain, day, cfg["profit_target"], cfg["stop_mult"])
+
+    def _assignable_legs(self, pos: OpenPosition, chain: list[OptionQuote],
+                         u: float | None, threshold: float) -> list:
+        """Short ITM legs whose market extrinsic is below ``threshold``.
+
+        Extrinsic is judged strictly from a live quote's mid (market mid minus
+        intrinsic); legs without a live two-sided market are never assigned on
+        model fallbacks.
+        """
+        if u is None or u <= 0 or not chain:
+            return []
+        out = []
+        for leg in pos.spec.legs:
+            if leg.action != Action.SELL:
+                continue
+            iv = intrinsic(leg.kind, leg.strike, u)
+            if iv <= 0:
+                continue  # OTM shorts are not assigned
+            lq = find_quote(chain, leg.kind, leg.strike, leg.expiry)
+            if lq is None or lq.mid <= 0:
+                continue
+            if (lq.mid - iv) < threshold:
+                out.append(leg)
+        return out
 
     def _exit_reason(self, pos: OpenPosition, chain: list[OptionQuote], day: date,
                      cfg: dict, last_u: float | None = None) -> str | None:
@@ -336,6 +491,7 @@ def compute_metrics(equity_curve: list[EquityPoint], trades: list[Trade], *,
     the universe/delisted inputs.
     """
     m = BacktestMetrics()
+    m.closed_reasons = dict(Counter(t.closed_reason for t in trades))
     if not equity_curve:
         m.survivorship_note = _survivorship_note(delisted_included, universe_size, store)
         m.universe_size = universe_size

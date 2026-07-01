@@ -10,6 +10,7 @@ gracefully offline.
 """
 from __future__ import annotations
 
+import datetime as _dt
 from typing import Any, Optional
 
 import httpx
@@ -89,7 +90,15 @@ class AlphaVantage:
         }
 
     def realtime_options(self, symbol: str) -> list[dict[str, Any]]:
-        """Realtime option chain via REALTIME_OPTIONS (premium endpoint)."""
+        """Realtime option chain via REALTIME_OPTIONS (premium endpoint).
+
+        Returns a list of *normalized* contract dicts with keys:
+        ``expiry`` (``YYYY-MM-DD`` str), ``strike`` (float), ``option_type``
+        (``"C"``/``"P"``), ``bid``/``ask``/``last`` (floats) — plus ``mark``
+        and ``symbol`` passthroughs.  Premium-required / rate-limit notes (and
+        any transport failure) surface as ``[{"error": ...}]`` instead of
+        raising, so callers can degrade gracefully.
+        """
         data = self._get(
             {"function": "REALTIME_OPTIONS", "symbol": symbol, "require_greeks": "true"}
         )
@@ -98,7 +107,12 @@ class AlphaVantage:
         contracts = data.get("data") or data.get("options") or []
         if not isinstance(contracts, list):
             return [{"error": "unexpected options payload", "symbol": symbol}]
-        return contracts
+        out: list[dict[str, Any]] = []
+        for raw in contracts:
+            row = _normalize_contract(raw, symbol)
+            if row is not None:
+                out.append(row)
+        return out
 
     def daily(self, symbol: str, outputsize: str = "compact") -> pd.DataFrame:
         """Daily OHLCV history as a DataFrame (empty frame on error)."""
@@ -128,6 +142,36 @@ class AlphaVantage:
             )
         df = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
         return df
+
+
+def _normalize_contract(raw: Any, symbol: str) -> Optional[dict[str, Any]]:
+    """Map one raw REALTIME_OPTIONS row onto the desk's canonical contract.
+
+    AV spells the fields ``expiration`` / ``type`` ("call"/"put") with string
+    numbers; we emit ``expiry`` (YYYY-MM-DD str), ``option_type`` ("C"/"P"),
+    and float ``strike``/``bid``/``ask``/``last``.  Rows missing an expiry or
+    an option type are dropped (unusable for leg matching).
+    """
+    if not isinstance(raw, dict):
+        return None
+    expiry = str(raw.get("expiration") or raw.get("expiry") or "").strip()[:10]
+    kind = str(raw.get("type") or raw.get("option_type") or "").strip().upper()[:1]
+    try:
+        expiry = _dt.date.fromisoformat(expiry).isoformat()
+    except ValueError:
+        return None
+    if kind not in ("C", "P"):
+        return None
+    return {
+        "symbol": str(raw.get("symbol") or symbol).upper(),
+        "expiry": expiry,
+        "strike": _to_float(raw.get("strike")),
+        "option_type": kind,
+        "bid": _to_float(raw.get("bid")),
+        "ask": _to_float(raw.get("ask")),
+        "last": _to_float(raw.get("last")),
+        "mark": _to_float(raw.get("mark")),
+    }
 
 
 def _to_float(v: Optional[Any]) -> float:

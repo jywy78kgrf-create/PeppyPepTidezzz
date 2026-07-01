@@ -22,8 +22,10 @@ from typing import Any, Callable, Optional
 from ..backtest.engine import Backtester
 from ..config import SETTINGS, Settings
 from ..contracts import BacktestResult, LearnIteration
-from ..data.loader import ChainStore
+from ..data.loader import ChainStore, EquityStore
 from ..strategies.library import STRATEGIES
+
+_TRADING_DAYS_PER_YEAR = 252
 
 # Objective key -> field on BacktestMetrics (higher is better for all of these).
 # Note: the engine reports max_drawdown as a NEGATIVE number (peak-to-trough
@@ -70,10 +72,14 @@ _PARAM_BOUNDS: dict[str, tuple[float, float, bool]] = {
 class LearningLoop:
     """Walk-forward evolutionary parameter search over a single strategy."""
 
-    def __init__(self, store: ChainStore, settings: Settings = SETTINGS) -> None:
+    def __init__(self, store: ChainStore, settings: Settings = SETTINGS,
+                 equity_store: Optional[EquityStore] = None) -> None:
         self.store = store
         self.settings = settings
         self._bt = Backtester(store, settings=settings)
+        # Injectable for tests; None -> the shared data/equity Parquet store
+        # (resolved lazily so a missing equity dir just disables regimes).
+        self._equity = equity_store
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -97,6 +103,12 @@ class LearningLoop:
         evaluated during it, and ``best_params`` are scored on it exactly once
         at the end — a defensible out-of-sample estimate, unlike the search's
         own OOS window which is peeked at every iteration.
+
+        Also (additive) ``"regimes"``: the best-params run's equity-curve days
+        classified into low/mid/high realized-vol terciles (average rv20
+        across the run's tickers; terciles over the run's own range) with
+        per-regime ``{days, total_return, sharpe, max_drawdown}`` — or None
+        when no equity data covers the run.
         """
         if strategy_name not in STRATEGIES:
             raise ValueError(f"unknown strategy {strategy_name!r}")
@@ -196,6 +208,12 @@ class LearningLoop:
                 "note": "range too short to reserve a holdout",
             }
 
+        # --- regime analytics on the best-params run (purely additive) -----
+        try:
+            regimes = self._regimes(best_oos_result, tickers)
+        except Exception:  # noqa: BLE001 - analytics must never break the loop
+            regimes = None
+
         return {
             "best_params": best_params,
             "history": history,
@@ -208,7 +226,66 @@ class LearningLoop:
                             if holdout_start is not None else None),
             },
             "holdout": holdout,
+            "regimes": regimes,
         }
+
+    # ------------------------------------------------------------------ #
+    # Regime analytics
+    # ------------------------------------------------------------------ #
+    def _regimes(self, result: BacktestResult, tickers: list[str]) -> Optional[dict]:
+        """Vol-regime decomposition of the best-params run's equity curve.
+
+        Every equity-curve day with a defined daily return (i.e. from the
+        second curve point on) is classified into low/mid/high terciles of
+        the average 20d realized vol (rv20) across the run's tickers, with
+        the tercile cut-offs computed over the run's own range.  Returns
+        ``{"low"/"mid"/"high": {days, total_return, sharpe, max_drawdown}}``
+        or None when no equity data covers the run.  Days whose rv20 is not
+        yet defined (indicator warm-up) are left unclassified.
+        """
+        curve = result.equity_curve
+        if len(curve) < 2:
+            return None
+
+        import pandas as pd
+
+        from ..signals.equity import indicator_frame
+
+        store = self._equity if self._equity is not None else EquityStore()
+        rv_series = []
+        for tk in dict.fromkeys(t.upper() for t in tickers):
+            try:
+                frame = indicator_frame(tk, store)
+            except Exception:  # noqa: BLE001 - ticker without equity data
+                continue
+            rv_series.append(pd.Series(frame["rv20"].to_numpy(),
+                                       index=list(frame["date"])))
+        if not rv_series:
+            return None  # no equity data for any of the run's tickers
+
+        # Average rv20 across tickers (NaN-skipping), sampled on curve days.
+        avg_rv = pd.concat(rv_series, axis=1).mean(axis=1)
+        rv_on_day = avg_rv.reindex([p.asof for p in curve])
+
+        # Daily simple returns: day i's return (and regime) belongs to day i.
+        classified: list[tuple[float, float]] = []   # (rv, daily return)
+        for i in range(1, len(curve)):
+            rv = rv_on_day.iloc[i]
+            if pd.isna(rv):
+                continue
+            prev = curve[i - 1].equity
+            ret = (curve[i].equity - prev) / prev if prev else 0.0
+            classified.append((float(rv), ret))
+        if not classified:
+            return None  # equity data never overlaps the run range
+
+        cuts = pd.Series([rv for rv, _ in classified]).quantile([1 / 3, 2 / 3])
+        q1, q2 = float(cuts.iloc[0]), float(cuts.iloc[1])
+        buckets: dict[str, list[float]] = {"low": [], "mid": [], "high": []}
+        for rv, ret in classified:
+            key = "low" if rv <= q1 else ("mid" if rv <= q2 else "high")
+            buckets[key].append(ret)
+        return {name: _regime_stats(rets) for name, rets in buckets.items()}
 
     # ------------------------------------------------------------------ #
     # Search internals
@@ -333,3 +410,31 @@ class LearningLoop:
             return BacktestResult(
                 config_name=strategy_name, metrics=metrics, params=dict(params)
             )
+
+
+def _regime_stats(rets: list[float]) -> dict:
+    """{days, total_return, sharpe, max_drawdown} for one regime's daily returns.
+
+    total_return compounds the regime's days; sharpe is annualised mean/std of
+    those days; max_drawdown is measured on the compounded sub-curve of the
+    regime's days treated as a contiguous series (same conventions as
+    ``compute_metrics``: std is population std, dd is <= 0).
+    """
+    if not rets:
+        return {"days": 0, "total_return": 0.0, "sharpe": 0.0, "max_drawdown": 0.0}
+    eq, peak, max_dd = 1.0, 1.0, 0.0
+    for r in rets:
+        eq *= (1.0 + r)
+        peak = max(peak, eq)
+        if peak > 0:
+            max_dd = min(max_dd, (eq - peak) / peak)
+    mean = sum(rets) / len(rets)
+    var = sum((x - mean) ** 2 for x in rets) / len(rets)
+    std = math.sqrt(var)
+    sharpe = (mean / std) * math.sqrt(_TRADING_DAYS_PER_YEAR) if std > 1e-12 else 0.0
+    return {
+        "days": len(rets),
+        "total_return": round(eq - 1.0, 4),
+        "sharpe": round(sharpe, 3),
+        "max_drawdown": round(max_dd, 4),
+    }

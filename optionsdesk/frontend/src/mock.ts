@@ -1,16 +1,25 @@
 // Rich, realistic MOCK data so `npm run dev` is fully demoable standalone.
 // Every api call in src/api.ts falls back here when the backend is unreachable.
+// Shapes MUST match PHASE2_CONTRACT.md exactly (same as the live backend).
 
 import type {
   BacktestResponse,
   BrokerStatus,
+  ClosedReasons,
+  EquityPoint,
   HealthResponse,
+  HoldoutInfo,
   LearnIteration,
   LearnResponse,
-  Position,
+  PaperBookResponse,
+  PaperHistoryPoint,
+  PaperHistoryResponse,
+  PaperPosition,
   Quote,
+  Regimes,
   Suggestion,
   SuggestionsResponse,
+  TradeSummary,
 } from './types'
 
 // Deterministic PRNG so the demo looks the same each load but feels organic.
@@ -22,6 +31,15 @@ function mulberry32(seed: number) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
+}
+
+function hashStr(s: string): number {
+  let h = 2166136261
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return h >>> 0
 }
 
 export const UNIVERSE = [
@@ -123,50 +141,110 @@ export function mockSuggestions(ticker?: string, topK = 6): SuggestionsResponse 
 /* --------------------------------------------------------------------- */
 /*  Backtest — climbing equity curve with realistic drawdowns            */
 /* --------------------------------------------------------------------- */
-export function mockBacktest(): BacktestResponse {
-  const rng = mulberry32(20240117)
-  const n = 504 // ~2 trading years
-  const start = new Date('2023-01-03').getTime()
-  const day = 86400000
-  let equity = 100000
-  let peak = equity
-  const curve: { asof: string; equity: number }[] = []
+export interface MockBacktestRequest {
+  strategy?: string
+  tickers?: string[]
+  start?: string
+  end?: string
+  params?: Record<string, unknown>
+}
 
+const SHORT_PREMIUM = new Set([
+  'bull_put_spread', 'bear_call_spread', 'iron_condor', 'covered_call', 'short_straddle',
+])
+
+export function mockBacktest(req: MockBacktestRequest = {}): BacktestResponse {
+  const strategy = req.strategy ?? 'bull_put_spread'
+  const tickers = req.tickers?.length ? req.tickers : ['SPY', 'QQQ', 'NVDA', 'AAPL']
+  const start = req.start ?? '2023-01-03'
+  const end = req.end ?? '2025-01-03'
+  const seed = hashStr(`${strategy}|${tickers.join(',')}|${start}|${end}`)
+  const rng = mulberry32(seed)
+  const premium = SHORT_PREMIUM.has(strategy)
+
+  const t0 = new Date(start).getTime()
+  const t1 = Math.max(t0 + 90 * 86400000, new Date(end).getTime())
+  const n = Math.min(504, Math.max(60, Math.round(((t1 - t0) / 86400000) * (5 / 7))))
+  const day = 86400000
+
+  let equity = 100000
+  const curve: EquityPoint[] = []
   // regime cycling produces organic up-trends punctuated by drawdowns
+  const edge = premium ? 0.0012 + rng() * 0.0005 : 0.0006 + rng() * 0.0006
+  const volMul = premium ? 1 : 1.7
   for (let i = 0; i < n; i++) {
-    const regime = Math.sin(i / 47) * 0.0006 + 0.00125 // positive drifting edge
-    const shock = (rng() - 0.5) * 0.0105
-    // occasional vol cluster -> drawdown
-    const cluster = i % 130 > 95 && i % 130 < 120 ? -0.0055 : 0
-    const ret = regime + shock + cluster
-    equity *= 1 + ret
-    peak = Math.max(peak, equity)
-    const date = new Date(start + i * day * (7 / 5)) // skip weekends roughly
+    const regime = Math.sin(i / 47) * 0.0006 + edge
+    const shock = (rng() - 0.5) * 0.0105 * volMul
+    const cluster = i % 130 > 95 && i % 130 < 120 ? -0.0055 : 0 // vol cluster -> drawdown
+    equity *= 1 + regime + shock + cluster
+    const date = new Date(t0 + i * day * (7 / 5)) // skip weekends roughly
     curve.push({ asof: date.toISOString().slice(0, 10), equity: Math.round(equity * 100) / 100 })
   }
 
-  const ret = equity / 100000 - 1
+  const totalReturn = equity / 100000 - 1
   const years = n / 252
-  const cagr = Math.pow(1 + ret, 1 / years) - 1
+  const cagr = Math.pow(1 + totalReturn, 1 / years) - 1
 
+  // how trades actually ended — realistic per-style mix, sums to n_trades
+  const nTrades = Math.round(n * 0.55 + rng() * 40)
+  const weights: Record<string, number> = premium
+    ? { target: 0.52, stop: 0.17, close_dte: 0.12, expiry: 0.11, assigned: 0.05, delisted: 0.01, end: 0.02 }
+    : { target: 0.31, stop: 0.34, close_dte: 0.18, expiry: 0.13, assigned: 0, delisted: 0.01, end: 0.03 }
+  const closed_reasons: ClosedReasons = {}
+  let assigned = 0
+  const keys = Object.keys(weights)
+  keys.forEach((k, i) => {
+    const c = i === keys.length - 1
+      ? nTrades - assigned
+      : Math.round(nTrades * weights[k] * (0.9 + rng() * 0.2))
+    if (c > 0) closed_reasons[k] = c
+    assigned += c
+  })
+
+  // sampled trade list (what /api/backtest returns after downsampling)
+  const trades: TradeSummary[] = []
+  const reasonPool = Object.entries(closed_reasons).flatMap(([r, c]) =>
+    Array<string>(Math.max(1, Math.round((c / nTrades) * 40))).fill(r),
+  )
+  for (let i = 0; i < Math.min(40, nTrades); i++) {
+    const oi = Math.floor((i / 40) * (n - 22))
+    const reason = reasonPool[Math.floor(rng() * reasonPool.length)]
+    const win = reason === 'target' || (reason !== 'stop' && rng() > 0.42)
+    trades.push({
+      spec_name: strategy,
+      ticker: tickers[Math.floor(rng() * tickers.length)],
+      opened: curve[oi].asof,
+      closed: curve[Math.min(n - 1, oi + 5 + Math.floor(rng() * 18))].asof,
+      pnl: Math.round((win ? 90 + rng() * 240 : -(120 + rng() * 380)) * 100) / 100,
+      costs: Math.round((6 + rng() * 9) * 100) / 100,
+      closed_reason: reason,
+    })
+  }
+
+  const winRate = premium ? 0.62 + rng() * 0.1 : 0.44 + rng() * 0.1
   return {
-    config: {
-      strategy: 'bull_put_spread',
-      params: { delta: 0.3, dte: 30, profit_target: 0.5, stop: 2.0 },
-      tickers: ['SPY', 'QQQ', 'NVDA', 'AAPL'],
-      start: '2023-01-03',
-      end: curve[curve.length - 1].asof,
-    },
-    cagr,
-    sharpe: 1.94,
-    sortino: 2.71,
-    max_drawdown: -0.142,
-    win_rate: 0.683,
-    profit_factor: 2.18,
-    n_trades: 318,
+    config: strategy,
+    params: req.params ?? { delta: 0.3, dte: 30, profit_target: 0.5, stop: 2.0 },
+    start: curve[0].asof,
+    end: curve[curve.length - 1].asof,
+    n_trades: nTrades,
+    cagr: Math.round(cagr * 10000) / 10000,
+    total_return: Math.round(totalReturn * 10000) / 10000,
+    sharpe: Math.round((premium ? 1.6 + rng() * 0.7 : 0.9 + rng() * 0.7) * 100) / 100,
+    sortino: Math.round((premium ? 2.2 + rng() * 0.9 : 1.2 + rng() * 0.8) * 100) / 100,
+    max_drawdown: -Math.round((premium ? 0.11 + rng() * 0.06 : 0.16 + rng() * 0.09) * 1000) / 1000,
+    win_rate: Math.round(winRate * 1000) / 1000,
+    profit_factor: Math.round((premium ? 1.9 + rng() * 0.6 : 1.3 + rng() * 0.5) * 100) / 100,
+    avg_trade: Math.round(((equity - 100000) / nTrades) * 100) / 100,
+    total_costs: Math.round(nTrades * (9 + rng() * 5) * 100) / 100,
+    total_holding_cost: Math.round(nTrades * (2 + rng() * 2) * 100) / 100,
+    universe_size: tickers.length,
+    delisted_included: 1,
     survivorship_note:
       'Universe reconstructed from point-in-time index membership; delisted names retained. No look-ahead in chain selection.',
+    closed_reasons,
     equity_curve: curve,
+    trades,
   }
 }
 
@@ -198,20 +276,42 @@ export function mockLearnHistory(nIter = 64): LearnResponse {
     }
     history.push({
       iteration: i + 1,
+      strategy: 'bull_put_spread',
       oos_score: Math.round(score * 1000) / 1000,
+      is_score: Math.round(clamp(score + 0.05 + (rng() - 0.5) * 0.06, 0, 1) * 1000) / 1000,
       accepted,
       params: trial,
+      note: accepted ? 'accepted: OOS improved' : 'rejected',
     })
   }
 
-  const bestIter = history.reduce((a, b) => (b.oos_score > a.oos_score ? b : a))
+  const bestSummary = mockBacktest({ strategy: 'bull_put_spread', params: bestParams })
+  const holdout: HoldoutInfo = {
+    start: '2024-09-16',
+    end: '2025-01-03',
+    score: Math.round((best - 0.07 + rng() * 0.05) * 1000) / 1000,
+    summary: { ...bestSummary, equity_curve: [], trades: [] },
+    note:
+      'final ~15% of the range, reserved before the search and evaluated exactly once on best_params',
+  }
+  const regimes: Regimes = {
+    low: { days: 168, total_return: 0.078, sharpe: 2.31, max_drawdown: -0.041 },
+    mid: { days: 171, total_return: 0.054, sharpe: 1.62, max_drawdown: -0.072 },
+    high: { days: 165, total_return: -0.012, sharpe: 0.34, max_drawdown: -0.138 },
+  }
+
   return {
-    best: {
-      oos_score: bestIter.oos_score,
-      params: bestIter.params,
-      iteration: bestIter.iteration,
+    best: { ...bestSummary, equity_curve: [], trades: [] },
+    best_params: bestParams,
+    objective: 'sortino',
+    folds: {
+      in_sample: ['2023-01-03', '2024-03-29'],
+      out_of_sample: ['2024-04-01', '2024-09-13'],
+      holdout: ['2024-09-16', '2025-01-03'],
     },
     history,
+    holdout,
+    regimes,
   }
 }
 
@@ -236,21 +336,198 @@ export function mockNextIteration(prev: LearnIteration | undefined, bestScore: n
 }
 
 /* --------------------------------------------------------------------- */
-/*  Paper trading                                                         */
+/*  Paper trading — stateful mock book so marks drift like a live feed   */
 /* --------------------------------------------------------------------- */
-export function mockPositions(): Position[] {
-  const raw: Omit<Position, 'upnl' | 'upnl_pct'>[] = [
-    { id: 'p1', ticker: 'NVDA', strategy: 'Bull Put 1180/1160', qty: 4, entry_price: 2.15, mark_price: 1.32, opened_at: '2026-06-18', dte: 16, delta: 0.18 },
-    { id: 'p2', ticker: 'SPY', strategy: 'Iron Condor 545/620', qty: 6, entry_price: 1.68, mark_price: 1.41, opened_at: '2026-06-23', dte: 9, delta: -0.04 },
-    { id: 'p3', ticker: 'AAPL', strategy: 'Call Calendar 215', qty: 3, entry_price: 3.05, mark_price: 3.62, opened_at: '2026-06-12', dte: 14, delta: 0.09 },
-    { id: 'p4', ticker: 'TSLA', strategy: 'Put Backspread 240/220', qty: 2, entry_price: -0.40, mark_price: 0.95, opened_at: '2026-06-25', dte: 22, delta: -0.31 },
-    { id: 'p5', ticker: 'QQQ', strategy: 'Short Strangle 460/520', qty: 2, entry_price: 4.10, mark_price: 4.85, opened_at: '2026-06-20', dte: 12, delta: -0.06 },
+const STARTING_CASH = 100000
+
+/** Live during regular US market hours (Mon–Fri 9:30–16:00 ET), else EOD. */
+function marketIsOpen(now = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  }).formatToParts(now)
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? ''
+  const wd = get('weekday')
+  if (wd === 'Sat' || wd === 'Sun') return false
+  const mins = parseInt(get('hour'), 10) * 60 + parseInt(get('minute'), 10)
+  return mins >= 9 * 60 + 30 && mins < 16 * 60
+}
+
+interface MockBookState {
+  positions: PaperPosition[]
+  realized: number
+  history: PaperHistoryPoint[]
+}
+
+function seedPositions(): PaperPosition[] {
+  // cost_basis / current_value follow broker semantics: negative = credit
+  // (cash received at open / paid to close); upnl = current_value - cost_basis.
+  return [
+    {
+      ticker: 'NVDA', spec_name: 'bull_put_spread', opened: '2026-06-18T14:31:00+00:00',
+      legs: [
+        { action: 'SELL', kind: 'P', strike: 1160, expiry: '2026-07-17', quantity: 4, price: 14.2 },
+        { action: 'BUY', kind: 'P', strike: 1140, expiry: '2026-07-17', quantity: 4, price: 12.05 },
+      ],
+      cost_basis: -860, current_value: -524, upnl: 336, status: 'OPEN',
+    },
+    {
+      ticker: 'SPY', spec_name: 'iron_condor', opened: '2026-06-23T13:45:00+00:00',
+      legs: [
+        { action: 'SELL', kind: 'P', strike: 585, expiry: '2026-07-10', quantity: 6, price: 2.4 },
+        { action: 'BUY', kind: 'P', strike: 575, expiry: '2026-07-10', quantity: 6, price: 1.62 },
+        { action: 'SELL', kind: 'C', strike: 640, expiry: '2026-07-10', quantity: 6, price: 1.9 },
+        { action: 'BUY', kind: 'C', strike: 650, expiry: '2026-07-10', quantity: 6, price: 1.0 },
+      ],
+      cost_basis: -1008, current_value: -843, upnl: 165, status: 'OPEN',
+    },
+    {
+      ticker: 'AAPL', spec_name: 'calendar_call', opened: '2026-06-12T15:02:00+00:00',
+      legs: [
+        { action: 'BUY', kind: 'C', strike: 215, expiry: '2026-08-21', quantity: 3, price: 6.4 },
+        { action: 'SELL', kind: 'C', strike: 215, expiry: '2026-07-17', quantity: 3, price: 3.35 },
+      ],
+      cost_basis: 915, current_value: 1088, upnl: 173, status: 'OPEN',
+    },
+    {
+      ticker: 'TSLA', spec_name: 'long_put', opened: '2026-06-25T17:20:00+00:00',
+      legs: [{ action: 'BUY', kind: 'P', strike: 240, expiry: '2026-07-24', quantity: 2, price: 3.9 }],
+      cost_basis: 780, current_value: 642, upnl: -138, status: 'OPEN',
+    },
+    {
+      ticker: 'QQQ', spec_name: 'short_straddle', opened: '2026-06-20T14:05:00+00:00',
+      legs: [
+        { action: 'SELL', kind: 'C', strike: 548, expiry: '2026-07-17', quantity: 2, price: 8.4 },
+        { action: 'SELL', kind: 'P', strike: 548, expiry: '2026-07-17', quantity: 2, price: 7.9 },
+      ],
+      cost_basis: -3260, current_value: -3542, upnl: -282, status: 'OPEN',
+    },
   ]
-  return raw.map((p) => {
-    const upnl = Math.round((p.entry_price - p.mark_price) * -1 * p.qty * 100 * 100) / 100
-    const upnl_pct = Math.round((upnl / (Math.abs(p.entry_price) * p.qty * 100)) * 1000) / 10
-    return { ...p, upnl, upnl_pct }
+}
+
+function seedHistory(state: MockBookState): PaperHistoryPoint[] {
+  // ~60 business days of EOD verification marks climbing from starting cash
+  // to the book's current total, with realistic wobble.
+  const rng = mulberry32(20260701)
+  const pts: PaperHistoryPoint[] = []
+  const now = Date.now()
+  const target = bookTotal(state)
+  const nDays = 60
+  let eq = STARTING_CASH
+  for (let i = nDays; i >= 1; i--) {
+    const d = new Date(now - i * 86400000)
+    const dow = d.getUTCDay()
+    if (dow === 0 || dow === 6) continue
+    const k = 1 - i / nDays
+    const drift = (target - STARTING_CASH) / (nDays * 0.78)
+    eq += drift + (rng() - 0.48) * 260
+    const upnl = (rng() - 0.4) * 500 * (0.4 + k)
+    d.setUTCHours(21, 0, 0, 0) // ~16:00 ET close mark
+    pts.push({
+      ts: d.toISOString(),
+      equity: Math.round(eq * 100) / 100,
+      cash: Math.round((eq - upnl + 700) * 100) / 100,
+      upnl: Math.round(upnl * 100) / 100,
+      live: false,
+    })
+  }
+  return pts
+}
+
+function bookCash(state: MockBookState): number {
+  // cash = starting − entry cash flows (debits paid / credits received) + realized
+  const flows = state.positions.reduce((a, p) => a + (p.status === 'OPEN' ? p.cost_basis : 0), 0)
+  return STARTING_CASH - flows + state.realized
+}
+
+function bookTotal(state: MockBookState): number {
+  const openValue = state.positions.reduce(
+    (a, p) => a + (p.status === 'OPEN' ? p.current_value : 0), 0)
+  return bookCash(state) + openValue
+}
+
+let _book: MockBookState | null = null
+function book(): MockBookState {
+  if (!_book) {
+    _book = { positions: seedPositions(), realized: 2140.55, history: [] }
+    _book.history = seedHistory(_book)
+    appendHistoryPoint(_book, marketIsOpen())
+  }
+  return _book
+}
+
+function appendHistoryPoint(state: MockBookState, live: boolean) {
+  const upnl = state.positions.reduce((a, p) => a + (p.status === 'OPEN' ? p.upnl : 0), 0)
+  state.history.push({
+    ts: new Date().toISOString(),
+    equity: Math.round(bookTotal(state) * 100) / 100,
+    cash: Math.round(bookCash(state) * 100) / 100,
+    upnl: Math.round(upnl * 100) / 100,
+    live,
   })
+  if (state.history.length > 500) state.history = state.history.slice(-500)
+}
+
+function bookResponse(state: MockBookState, live: boolean): PaperBookResponse {
+  // like the backend broker: ALL positions (open + closed); close is by index
+  // into this same list, so the panel must keep original indices.
+  const open = state.positions.filter((p) => p.status === 'OPEN')
+  const upnl = open.reduce((a, p) => a + p.upnl, 0)
+  const openValue = open.reduce((a, p) => a + p.current_value, 0)
+  const cash = bookCash(state)
+  return {
+    positions: state.positions.map((p) => ({ ...p, legs: p.legs.map((l) => ({ ...l })) })),
+    equity: {
+      cash: Math.round(cash * 100) / 100,
+      open_value: Math.round(openValue * 100) / 100,
+      upnl: Math.round(upnl * 100) / 100,
+      realized: Math.round(state.realized * 100) / 100,
+      total: Math.round((cash + openValue) * 100) / 100,
+      starting_cash: STARTING_CASH,
+    },
+    live,
+    asof: new Date().toISOString(),
+  }
+}
+
+export function mockPaperBook(): PaperBookResponse {
+  return bookResponse(book(), marketIsOpen())
+}
+
+/** POST /api/paper/mark — drift marks, snapshot, return the re-marked book. */
+export function mockPaperMark(): PaperBookResponse {
+  const state = book()
+  const live = marketIsOpen()
+  for (const p of state.positions) {
+    if (p.status !== 'OPEN') continue
+    const scale = Math.max(60, Math.abs(p.current_value))
+    const drift = (Math.random() - 0.5) * 0.012 * scale
+    p.current_value = Math.round((p.current_value + drift) * 100) / 100
+    p.upnl = Math.round((p.current_value - p.cost_basis) * 100) / 100
+  }
+  appendHistoryPoint(state, live)
+  return bookResponse(state, live)
+}
+
+export function mockPaperHistory(): PaperHistoryResponse {
+  return { points: book().history.map((p) => ({ ...p })) }
+}
+
+/** POST /api/paper/close — close by positions[] index; realize its uPnL. */
+export function mockPaperClose(idx: number): PaperBookResponse {
+  // Mirrors the backend broker: idx addresses the FULL positions list
+  // (open + closed), and closing an already-closed position is a no-op.
+  const state = book()
+  const target = state.positions[idx]
+  if (target && target.status === 'OPEN') {
+    target.status = 'CLOSED'
+    state.realized += target.upnl
+  }
+  appendHistoryPoint(state, marketIsOpen())
+  return bookResponse(state, marketIsOpen())
 }
 
 /* --------------------------------------------------------------------- */

@@ -204,6 +204,7 @@ def learn(req: LearnRequest) -> dict:
         "objective": out.get("objective", req.objective),
         "folds": out.get("folds"),
         "holdout": out.get("holdout"),
+        "regimes": out.get("regimes"),
         "history": [it for it in out["history"]],
     })
 
@@ -250,7 +251,8 @@ def learn_stream(
                 )
                 q.put("event: done\ndata: " + json.dumps(serialize(
                     {"best": out["best"], "best_params": out["best_params"],
-                     "holdout": out.get("holdout")}
+                     "holdout": out.get("holdout"),
+                     "regimes": out.get("regimes")}
                 )) + "\n\n")
             except Exception as exc:  # noqa: BLE001
                 q.put("data: " + json.dumps({"error": str(exc)}) + "\n\n")
@@ -343,14 +345,45 @@ def _paper():
     return PaperBroker(starting_cash=SETTINGS.starting_capital)
 
 
+def _alpha_vantage():
+    """AV client factory (module-level seam so tests can monkeypatch it)."""
+    from ..live.alpha_vantage import AlphaVantage
+
+    return AlphaVantage()
+
+
+def _paper_book(pb, live: bool) -> dict:
+    """Contract shape shared by GET /paper/positions and POST /paper/mark."""
+    return serialize({
+        "positions": [p for p in pb.positions()],
+        "equity": pb.equity(),
+        "live": bool(live),
+        "asof": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+    })
+
+
+def _mark_and_book(pb) -> dict:
+    """Mark the paper book (live when an AV key is configured, else the
+    latest historical chain) and return the contract-shaped payload.
+
+    ``mark_live`` snapshots equity history internally and never raises."""
+    res = pb.mark_live(_alpha_vantage(), store=store())
+    return _paper_book(pb, res.get("live", False))
+
+
 @app.get("/api/paper/positions")
 def paper_positions() -> dict:
-    pb = _paper()
-    pb.mark(store())
-    return {
-        "positions": [serialize(p) for p in pb.positions()],
-        "equity": pb.equity(),
-    }
+    return _mark_and_book(_paper())
+
+
+@app.post("/api/paper/mark")
+def paper_mark() -> dict:
+    return _mark_and_book(_paper())
+
+
+@app.get("/api/paper/history")
+def paper_history() -> dict:
+    return serialize({"points": _paper().history()})
 
 
 @app.post("/api/paper/open")

@@ -13,7 +13,7 @@ from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 
-from ..config import CHAINS_DIR, UNIVERSE_DIR
+from ..config import CHAINS_DIR, EQUITY_DIR, UNIVERSE_DIR
 
 N = lambda x: 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 n = lambda x: math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
@@ -40,6 +40,11 @@ def bs_greeks(S, K, T, r, sigma, call):
     return price, delta, gamma, theta, vega, rho
 
 
+def _friday_on_or_after(d: date) -> date:
+    """Next Friday on/after ``d`` — the fixed expiry grid."""
+    return d + timedelta(days=(4 - d.weekday()) % 7)
+
+
 def gen_ticker(ticker: str, seed: int, s0: float, vol: float, drift: float,
                start: date, days: int) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
@@ -61,9 +66,16 @@ def gen_ticker(ticker: str, seed: int, s0: float, vol: float, drift: float,
             S *= math.exp(rng.normal(-0.04, 0.06))
         # quoted IV tracks current vol with a small risk premium + estimation noise
         quote_vol = max(0.06, inst_vol * 1.05 + rng.normal(0, 0.015))
-        # monthly expiries out to ~120 days
-        for dte in (7, 14, 30, 60, 90, 120):
-            expiry = d + timedelta(days=dte)
+        # FIXED Friday expiry grid out to ~120 days. Pinning expiries to calendar
+        # dates (instead of rolling asof+dte daily) means the same contract
+        # exists on consecutive days — required for the engine's T+1 fills to
+        # re-locate legs, and how real listed options behave.
+        expiries = sorted({_friday_on_or_after(d + timedelta(days=dte))
+                           for dte in (7, 14, 30, 60, 90, 120)})
+        for expiry in expiries:
+            dte = (expiry - d).days
+            if dte <= 0:
+                continue
             T = dte / 365
             atm = round(S / 5) * 5
             for k in range(-6, 7):
@@ -95,6 +107,7 @@ def gen_ticker(ticker: str, seed: int, s0: float, vol: float, drift: float,
 def main():
     CHAINS_DIR.mkdir(parents=True, exist_ok=True)
     UNIVERSE_DIR.mkdir(parents=True, exist_ok=True)
+    EQUITY_DIR.mkdir(parents=True, exist_ok=True)
     start = date(2023, 1, 2)
     specs = [
         ("AAPL", 1, 180.0, 0.26, 0.10, None),
@@ -108,9 +121,20 @@ def main():
         if delisted:
             df = df[df["asof"] <= delisted]
         df.to_parquet(CHAINS_DIR / f"{ticker}.parquet", index=False)
+        # matching equity OHLCV store so signal gates + regime analytics run
+        # on the sample exactly as they do on imported real data
+        eq = (df.groupby("asof")["underlying_close"].first().reset_index()
+                .rename(columns={"asof": "date", "underlying_close": "close"}))
+        for c in ("open", "high", "low"):
+            eq[c] = eq["close"]
+        eq["adj_close"] = eq["close"]
+        eq["volume"] = 1_000_000
+        eq["date"] = eq["date"].astype(str)
+        eq[["date", "open", "high", "low", "close", "adj_close", "volume"]].to_parquet(
+            EQUITY_DIR / f"{ticker}.parquet", index=False)
         uni.append(dict(ticker=ticker, listed=start,
                         delisted=delisted or "", sector="Tech"))
-        print(f"  {ticker}: {len(df):,} rows")
+        print(f"  {ticker}: {len(df):,} rows (+{len(eq)} equity days)")
     pd.DataFrame(uni).to_csv(UNIVERSE_DIR / "universe.csv", index=False)
     print(f"Sample store written to {CHAINS_DIR}")
 

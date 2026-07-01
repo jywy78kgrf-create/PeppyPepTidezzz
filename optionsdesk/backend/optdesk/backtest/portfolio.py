@@ -12,6 +12,7 @@ lives here so paper trading can reuse the same math.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -32,6 +33,78 @@ from ..quant.pricing import (
     mark_leg,
     quote_theo_price,
 )
+
+
+# --------------------------------------------------------------------------- #
+# Reg-T-style margin
+# --------------------------------------------------------------------------- #
+def margin_requirement(legs: list[Leg], underlying: float,
+                       fills: list[Fill]) -> float:
+    """Reg-T-style initial margin (dollars) for a set of option legs at open.
+
+    Semantics (computed once at open; no daily re-mark):
+
+    * Each SHORT leg paired with a same-kind LONG leg (expiry >= short's,
+      quantity available) is *defined-risk*: the pair requires
+      ``width - net credit`` (floored at 0) — i.e. the spread's max loss, so
+      defined-risk structures keep their width-minus-credit requirement.
+      Pairing greedily prefers the long leg that minimises the width.
+    * Each remaining (naked) short leg requires, per share,
+      ``premium + max(0.20 * U - OTM_amount, 0.10 * U for calls / 0.10 * K
+      for puts)``, times 100 x quantity.
+    * Long legs not used as offsets require nothing (their debit is cash paid).
+
+    ``fills`` supply the actual per-share premiums (matched to legs by
+    action/kind/strike/expiry; unmatched legs count a premium of 0).
+    """
+    u = max(0.0, float(underlying or 0.0))
+    prem: dict[tuple, float] = {}
+    for f in fills:
+        prem[(f.action, f.kind, f.strike, f.expiry)] = f.price
+
+    def _prem(leg: Leg) -> float:
+        return prem.get((leg.action, leg.kind, leg.strike, leg.expiry), 0.0)
+
+    shorts = [[leg, leg.quantity] for leg in legs if leg.action == Action.SELL]
+    longs = [[leg, leg.quantity] for leg in legs if leg.action == Action.BUY]
+
+    total = 0.0
+    for srec in shorts:
+        s, s_qty = srec[0], srec[1]
+
+        def _width(l: Leg) -> float:
+            if s.kind == OptionType.CALL:
+                return max(0.0, l.strike - s.strike)
+            return max(0.0, s.strike - l.strike)
+
+        # Pair against long legs of the same kind that define the risk,
+        # tightest (smallest-width) offset first.
+        candidates = sorted(
+            (lrec for lrec in longs
+             if lrec[0].kind == s.kind and lrec[1] > 0 and lrec[0].expiry >= s.expiry),
+            key=lambda lrec: _width(lrec[0]))
+        for lrec in candidates:
+            if s_qty <= 0:
+                break
+            l, l_qty = lrec[0], lrec[1]
+            take = min(s_qty, l_qty)
+            width = _width(l)
+            pair_credit = max(0.0, _prem(s) - _prem(l))
+            total += max(0.0, (width - pair_credit)) * CONTRACT_MULTIPLIER * take
+            s_qty -= take
+            lrec[1] -= take
+
+        if s_qty > 0:  # naked remainder: full Reg-T formula
+            if s.kind == OptionType.CALL:
+                otm = max(0.0, s.strike - u)
+                base = max(0.20 * u - otm, 0.10 * u)
+            else:
+                otm = max(0.0, u - s.strike)
+                base = max(0.20 * u - otm, 0.10 * s.strike)
+            total += (_prem(s) + base) * CONTRACT_MULTIPLIER * s_qty
+        srec[1] = s_qty
+
+    return round(max(0.0, total), 4)
 
 
 @dataclass(slots=True)
@@ -133,11 +206,17 @@ class Portfolio:
             fills.append(Fill(asof, leg.action, leg.kind, leg.strike, leg.expiry,
                               leg.quantity, price, commission, slip))
 
-        # Capital at risk: debit paid, or the spec's modelled max_loss for credits.
+        # Capital at risk: debit paid, or — for credit structures —
+        # max(modelled max_loss, Reg-T-style margin at open). Defined-risk
+        # spreads keep width-credit; naked shorts get the Reg-T formula.
         if signed_cash < 0:
             capital_at_risk = abs(signed_cash)
         else:
-            capital_at_risk = max(spec.max_loss, signed_cash)
+            u = next((qq.underlying for qq in chain if qq.underlying > 0),
+                     spec.meta.get("underlying", 0.0)) or 0.0
+            reg_t = margin_requirement(spec.legs, u, fills)
+            ml = spec.max_loss if math.isfinite(spec.max_loss) else 0.0
+            capital_at_risk = max(ml, reg_t)
 
         entry_cash = signed_cash - total_costs
         self.cash += entry_cash
@@ -215,12 +294,20 @@ class Portfolio:
     # ------------------------------------------------------------------ #
     def close(self, pos: OpenPosition, chain: list[OptionQuote], asof: date,
               reason: str, *, at_intrinsic: bool = False,
-              underlying: float | None = None) -> Trade:
+              underlying: float | None = None,
+              intrinsic_legs: frozenset | None = None,
+              assign_fee_contracts: int = 0) -> Trade:
         """Close a position, book exit cash/costs, and record the round-trip.
 
         ``at_intrinsic`` forces expiry/delisting settlement at intrinsic value
         (no spread crossing for the option, but exchange/assignment fees still
         apply on real trades).
+
+        ``intrinsic_legs`` (a set of ``(kind, strike, expiry)`` keys) settles
+        just those legs at intrinsic while the rest cross the spread — used for
+        early assignment, where the assigned short leg settles at intrinsic and
+        the remaining legs are liquidated at market.  ``assign_fee_contracts``
+        charges ``CostModel.assignment_fee`` per assigned contract.
         """
         u = underlying
         if u is None:
@@ -233,7 +320,10 @@ class Portfolio:
         for leg in pos.spec.legs:
             close_action = Action.SELL if leg.action == Action.BUY else Action.BUY
             q = find_quote(chain, leg.kind, leg.strike, leg.expiry)
-            if at_intrinsic or q is None:
+            settle_intrinsic = at_intrinsic or (
+                intrinsic_legs is not None
+                and (leg.kind, leg.strike, leg.expiry) in intrinsic_legs)
+            if settle_intrinsic or q is None:
                 price = intrinsic(leg.kind, leg.strike, u)
                 slip = 0.0
             else:
@@ -246,6 +336,9 @@ class Portfolio:
             total_costs += commission + slip * leg.quantity * CONTRACT_MULTIPLIER
             fills.append(Fill(asof, close_action, leg.kind, leg.strike, leg.expiry,
                               leg.quantity, round(price, 4), commission, slip))
+
+        if assign_fee_contracts > 0:
+            total_costs += self.cost.assignment_fee * assign_fee_contracts
 
         exit_cash = signed_cash - total_costs
         self.cash += exit_cash

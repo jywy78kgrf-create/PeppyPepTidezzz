@@ -14,13 +14,114 @@ import {
 } from 'recharts'
 import { postLearn } from '../api'
 import * as mock from '../mock'
-import type { LearnIteration } from '../types'
+import type { HoldoutInfo, LearnIteration, Regimes } from '../types'
+import { num, pct } from '../lib/format'
 
 interface Pt {
   iteration: number
   oos_score: number
   best: number
   accepted: boolean
+}
+
+/* ---- HOLDOUT — the number to trust (never touched during the search) --- */
+function HoldoutChip({ holdout }: { holdout: HoldoutInfo | null }) {
+  if (!holdout) return null
+  const range =
+    holdout.start && holdout.end ? `${holdout.start} → ${holdout.end}` : 'no holdout reserved'
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.92 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+      className="flex items-center gap-2 rounded-full px-3 py-1"
+      style={{
+        border: '1px solid color-mix(in srgb, var(--color-gold) 55%, transparent)',
+        background: 'color-mix(in srgb, var(--color-gold) 9%, transparent)',
+        boxShadow:
+          '0 0 14px -4px var(--color-gold), inset 0 1px 0 color-mix(in srgb, #ffffff 10%, transparent)',
+      }}
+      title={`${holdout.note}\n${range}`}
+    >
+      <span
+        className="text-[9px] font-semibold tracking-[0.16em]"
+        style={{ color: 'var(--color-gold-bright)' }}
+      >
+        HOLDOUT
+      </span>
+      <span className="num text-[13px] font-bold" style={{ color: 'var(--color-gold-bright)' }}>
+        {num(holdout.score, 3)}
+      </span>
+      <span className="hidden text-[8.5px] tracking-[0.06em] text-[var(--color-ink-dim)] xl:inline">
+        the number to trust
+      </span>
+    </motion.div>
+  )
+}
+
+/* ---- per-vol-regime performance mini-table ---------------------------- */
+const REGIME_ROWS: { key: keyof Regimes; label: string; color: string }[] = [
+  { key: 'low', label: 'LOW VOL', color: 'var(--color-teal)' },
+  { key: 'mid', label: 'MID VOL', color: 'var(--color-amber)' },
+  { key: 'high', label: 'HIGH VOL', color: 'var(--color-down)' },
+]
+
+function RegimesTable({ regimes }: { regimes: Regimes }) {
+  return (
+    <div className="flex w-56 shrink-0 flex-col rounded-xl border border-[var(--color-edge-soft)] bg-[var(--color-void)]/40 p-2.5">
+      <div className="mb-1.5 text-[8.5px] tracking-[0.14em] text-[var(--color-ink-faint)]">
+        REGIME PERFORMANCE
+      </div>
+      <table className="w-full text-right">
+        <thead>
+          <tr className="text-[8px] uppercase tracking-[0.1em] text-[var(--color-ink-faint)]">
+            <th className="pb-1 text-left font-medium">Regime</th>
+            <th className="pb-1 font-medium">Return</th>
+            <th className="pb-1 font-medium">Sharpe</th>
+            <th className="pb-1 font-medium">MaxDD</th>
+          </tr>
+        </thead>
+        <tbody>
+          {REGIME_ROWS.map(({ key, label, color }) => {
+            const r = regimes[key]
+            if (!r) return null
+            return (
+              <tr key={key} className="text-[10px]">
+                <td className="py-0.5 text-left">
+                  <span className="flex items-center gap-1.5">
+                    <span
+                      style={{
+                        width: 5,
+                        height: 5,
+                        borderRadius: 99,
+                        background: color,
+                        boxShadow: `0 0 6px ${color}`,
+                      }}
+                    />
+                    <span className="text-[8.5px] tracking-[0.08em] text-[var(--color-ink-dim)]">
+                      {label}
+                    </span>
+                  </span>
+                </td>
+                <td
+                  className="num py-0.5 font-semibold"
+                  style={{
+                    color: (r.total_return ?? 0) >= 0 ? 'var(--color-up)' : 'var(--color-down)',
+                  }}
+                >
+                  {pct(r.total_return)}
+                </td>
+                <td className="num py-0.5 text-[var(--color-ink)]">{num(r.sharpe, 2)}</td>
+                <td className="num py-0.5" style={{ color: 'var(--color-down)' }}>
+                  {pct(r.max_drawdown)}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 export default function LearningPanel() {
@@ -31,6 +132,8 @@ export default function LearningPanel() {
     iter: 0,
   })
   const [series, setSeries] = useState<Pt[]>([])
+  const [holdout, setHoldout] = useState<HoldoutInfo | null>(null)
+  const [regimes, setRegimes] = useState<Regimes | null>(null)
   const [flash, setFlash] = useState(false)
   const histRef = useRef<LearnIteration[]>([])
 
@@ -45,15 +148,22 @@ export default function LearningPanel() {
       n_iter: 40,
     }).then((r) => {
       if (stopped) return
-      histRef.current = r.history
-      setHistory(r.history)
+      const hist = r.history ?? []
+      histRef.current = hist
+      setHistory(hist)
       let running = 0
-      const pts: Pt[] = r.history.map((h) => {
-        running = Math.max(running, h.oos_score)
+      let bestIter = 0
+      const pts: Pt[] = hist.map((h) => {
+        if (h.oos_score > running) {
+          running = h.oos_score
+          bestIter = h.iteration
+        }
         return { iteration: h.iteration, oos_score: h.oos_score, best: running, accepted: h.accepted }
       })
       setSeries(pts)
-      setBest({ score: r.best.oos_score, params: r.best.params, iter: r.best.iteration })
+      setBest({ score: running, params: r.best_params ?? {}, iter: bestIter })
+      setHoldout(r.holdout ?? null)
+      setRegimes(r.regimes ?? null)
     })
     return () => {
       stopped = true
@@ -110,9 +220,12 @@ export default function LearningPanel() {
             iter {history.length ? history[history.length - 1].iteration : 0}
           </span>
         </div>
-        <span className="num text-[10px] text-[var(--color-ink-faint)]">
-          {acceptCount} accepted
-        </span>
+        <div className="flex items-center gap-3">
+          <HoldoutChip holdout={holdout} />
+          <span className="num text-[10px] text-[var(--color-ink-faint)]">
+            {acceptCount} accepted
+          </span>
+        </div>
       </header>
       <div className="hairline mx-3 shrink-0" />
 
@@ -143,6 +256,20 @@ export default function LearningPanel() {
                 width={28}
               />
               <ZAxis range={[24, 24]} />
+              {holdout?.score != null && (
+                <ReferenceLine
+                  y={holdout.score}
+                  stroke="var(--color-gold-bright)"
+                  strokeDasharray="6 3"
+                  strokeOpacity={0.65}
+                  label={{
+                    value: 'holdout',
+                    position: 'insideTopRight',
+                    fill: 'var(--color-gold-bright)',
+                    fontSize: 8.5,
+                  }}
+                />
+              )}
               <ReferenceLine y={best.score} stroke="var(--color-iris)" strokeDasharray="4 4" strokeOpacity={0.5} />
               <Scatter data={rejected} fill="var(--color-ink-faint)" fillOpacity={0.35} isAnimationActive={false} />
               <Scatter
@@ -183,45 +310,48 @@ export default function LearningPanel() {
           </div>
         </div>
 
-        {/* current best params */}
-        <motion.div
-          animate={
-            flash
-              ? { boxShadow: '0 0 0 1px var(--color-iris), 0 0 22px -6px var(--color-iris)' }
-              : { boxShadow: '0 0 0 1px transparent' }
-          }
-          transition={{ duration: 0.5 }}
-          className="rounded-xl border border-[var(--color-edge-soft)] bg-[var(--color-void)]/40 p-2.5"
-        >
-          <div className="mb-2 flex items-center justify-between">
-            <span className="panel-title">Current Best</span>
-            <AnimatePresence mode="popLayout">
-              <motion.span
-                key={best.score}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="num text-[14px] font-semibold text-[var(--color-iris)]"
-              >
-                {best.score.toFixed(3)}
-              </motion.span>
-            </AnimatePresence>
-          </div>
-          <div className="grid grid-cols-4 gap-2">
-            {Object.entries(best.params).map(([k, v]) => (
-              <div
-                key={k}
-                className="rounded-lg border border-[var(--color-edge-soft)] bg-[var(--color-panel)]/50 px-2 py-1.5 text-center"
-              >
-                <div className="num text-[12px] font-semibold text-[var(--color-ink)]">
-                  {typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(2)) : String(v)}
+        {/* current best params + per-regime performance */}
+        <div className="flex gap-2">
+          <motion.div
+            animate={
+              flash
+                ? { boxShadow: '0 0 0 1px var(--color-iris), 0 0 22px -6px var(--color-iris)' }
+                : { boxShadow: '0 0 0 1px transparent' }
+            }
+            transition={{ duration: 0.5 }}
+            className="min-w-0 flex-1 rounded-xl border border-[var(--color-edge-soft)] bg-[var(--color-void)]/40 p-2.5"
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <span className="panel-title">Current Best</span>
+              <AnimatePresence mode="popLayout">
+                <motion.span
+                  key={best.score}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="num text-[14px] font-semibold text-[var(--color-iris)]"
+                >
+                  {best.score.toFixed(3)}
+                </motion.span>
+              </AnimatePresence>
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              {Object.entries(best.params).map(([k, v]) => (
+                <div
+                  key={k}
+                  className="rounded-lg border border-[var(--color-edge-soft)] bg-[var(--color-panel)]/50 px-2 py-1.5 text-center"
+                >
+                  <div className="num text-[12px] font-semibold text-[var(--color-ink)]">
+                    {typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(2)) : String(v)}
+                  </div>
+                  <div className="text-[8px] uppercase tracking-[0.12em] text-[var(--color-ink-faint)]">
+                    {k}
+                  </div>
                 </div>
-                <div className="text-[8px] uppercase tracking-[0.12em] text-[var(--color-ink-faint)]">
-                  {k}
-                </div>
-              </div>
-            ))}
-          </div>
-        </motion.div>
+              ))}
+            </div>
+          </motion.div>
+          {regimes && <RegimesTable regimes={regimes} />}
+        </div>
       </div>
     </motion.section>
   )

@@ -122,7 +122,8 @@ class Trade:
     holding_cost: float = 0.0     # cost of carry on margin/debit
     gross_pnl: float = 0.0
     costs: float = 0.0            # commissions + slippage + holding
-    closed_reason: str = ""       # "expiry" | "target" | "stop" | "delisted"
+    closed_reason: str = ""       # "expiry" | "target" | "stop" | "close_dte"
+    #                             # | "assigned" | "delisted" | "end"
 
 
 # --------------------------------------------------------------------------- #
@@ -170,6 +171,8 @@ class BacktestMetrics:
     universe_size: int = 0
     delisted_included: int = 0
     survivorship_note: str = ""
+    # how trades actually ended: closed_reason -> count (sums to n_trades)
+    closed_reasons: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -201,6 +204,7 @@ class BacktestResult:
             "universe_size": m.universe_size,
             "delisted_included": m.delisted_included,
             "survivorship_note": m.survivorship_note,
+            "closed_reasons": dict(m.closed_reasons),
         }
 
 

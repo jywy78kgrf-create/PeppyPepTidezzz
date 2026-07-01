@@ -8,7 +8,8 @@ import type {
   BrokerStatus,
   HealthResponse,
   LearnResponse,
-  Position,
+  PaperBookResponse,
+  PaperHistoryResponse,
   Quote,
   SuggestionsResponse,
 } from './types'
@@ -102,12 +103,14 @@ export interface BacktestRequest {
   tickers: string[]
   start: string
   end: string
+  capital?: number
+  risk?: Record<string, unknown> // RiskConfig fields, e.g. { method: 'kelly' }
 }
 
 export function postBacktest(body: BacktestRequest): Promise<BacktestResponse> {
   return withFallback(
     () => request<BacktestResponse>('/api/backtest', { method: 'POST', body: JSON.stringify(body) }),
-    () => mock.mockBacktest(),
+    () => mock.mockBacktest(body),
   )
 }
 
@@ -117,6 +120,7 @@ export interface LearnRequest {
   start: string
   end: string
   n_iter: number
+  objective?: string
 }
 
 export function postLearn(body: LearnRequest): Promise<LearnResponse> {
@@ -126,31 +130,44 @@ export function postLearn(body: LearnRequest): Promise<LearnResponse> {
   )
 }
 
-export function getPositions(): Promise<Position[]> {
+/* ------------------------------ paper --------------------------------- */
+
+/** GET /api/paper/positions — the current paper book, marked. */
+export function getPaperBook(): Promise<PaperBookResponse> {
   return withFallback(
-    () => request<{ positions: Position[] } | Position[]>('/api/paper/positions').then((r) =>
-      Array.isArray(r) ? r : r.positions,
-    ),
-    () => mock.mockPositions(),
+    () => request<PaperBookResponse>('/api/paper/positions'),
+    () => mock.mockPaperBook(),
   )
 }
 
-export function openPosition(body: Record<string, unknown>): Promise<Position[]> {
+/** POST /api/paper/mark — re-mark the book (live when AV is configured). */
+export function postPaperMark(): Promise<PaperBookResponse> {
   return withFallback(
-    () => request<Position[]>('/api/paper/open', { method: 'POST', body: JSON.stringify(body) }),
-    () => mock.mockPositions(),
+    () => request<PaperBookResponse>('/api/paper/mark', { method: 'POST', body: '{}' }),
+    () => mock.mockPaperMark(),
   )
 }
 
-export function closePosition(id: string): Promise<{ ok: boolean }> {
+/** GET /api/paper/history — the real-world verification equity curve. */
+export function getPaperHistory(): Promise<PaperHistoryResponse> {
   return withFallback(
-    () => request<{ ok: boolean }>('/api/paper/close', {
+    () => request<PaperHistoryResponse>('/api/paper/history'),
+    () => mock.mockPaperHistory(),
+  )
+}
+
+/** POST /api/paper/close — close the position at index `idx` in the book. */
+export function closePosition(idx: number): Promise<PaperBookResponse> {
+  return withFallback(
+    () => request<PaperBookResponse>('/api/paper/close', {
       method: 'POST',
-      body: JSON.stringify({ id }),
-    }),
-    () => ({ ok: true }),
+      body: JSON.stringify({ idx }),
+    }).then(() => request<PaperBookResponse>('/api/paper/positions')),
+    () => mock.mockPaperClose(idx),
   )
 }
+
+/* ------------------------------ live ---------------------------------- */
 
 export function getQuote(ticker: string): Promise<Quote> {
   return withFallback(
@@ -159,11 +176,31 @@ export function getQuote(ticker: string): Promise<Quote> {
   )
 }
 
+interface RawBrokersStatus {
+  brokers?: BrokerStatus[]
+  ibkr?: { connected?: boolean; detail?: string }
+  alpha_vantage?: { configured?: boolean }
+}
+
 export function getBrokerStatus(): Promise<BrokerStatus[]> {
   return withFallback(
-    () => request<{ brokers: BrokerStatus[] } | BrokerStatus[]>('/api/brokers/status').then((r) =>
-      Array.isArray(r) ? r : r.brokers,
-    ),
+    () => request<RawBrokersStatus | BrokerStatus[]>('/api/brokers/status').then((r) => {
+      if (Array.isArray(r)) return r
+      if (r.brokers) return r.brokers
+      const out: BrokerStatus[] = []
+      if (r.alpha_vantage) {
+        out.push({
+          name: 'Alpha Vantage',
+          connected: Boolean(r.alpha_vantage.configured),
+          detail: 'market data',
+        })
+      }
+      if (r.ibkr) {
+        out.push({ name: 'IBKR', connected: Boolean(r.ibkr.connected), detail: r.ibkr.detail })
+      }
+      out.push({ name: 'Paper', connected: true, detail: 'simulator' })
+      return out
+    }),
     () => mock.mockBrokers(),
   )
 }

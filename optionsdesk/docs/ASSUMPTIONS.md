@@ -4,10 +4,12 @@ A backtest is only defensible if its assumptions are explicit. These are ours.
 Each one biases results in a known direction; read this before trusting a number.
 
 ## Execution model
-- **EOD fills.** Signals are generated from a day's end-of-day chain and filled
-  the same day at that chain's quotes. There is no intraday timing. Real fills
-  would occur the next session; in trending markets this flatters entries
-  slightly. (Roadmap: optional next-day-open fill mode.)
+- **T+1 fills (default).** Signals are generated from a day's end-of-day chain
+  and fill on the ticker's NEXT trading day at that day's quotes (`fill_lag: 1`).
+  Legs are re-located by exact strike/expiry; if any leg is unquotable at fill
+  time, the signal is abandoned. Set `fill_lag: 0` to reproduce the older,
+  flattering same-close behavior. Sizing/budgeting happens at fill time with
+  fill-day equity.
 - **Spread crossing.** Every entry/exit pays `slippage_frac_of_spread` (default
   25%) of the quoted bid/ask spread, floored at `min_slippage`, plus
   per-contract commission and exchange fees on every leg, both sides.
@@ -17,10 +19,12 @@ Each one biases results in a known direction; read this before trusting a number
   reasonable; at institutional size it is not.
 
 ## Options mechanics
-- **European-style management.** Early assignment is NOT modeled. Short ITM
-  options near ex-dividend or deep ITM would sometimes be assigned early in
-  reality; positions here are held to the managed exit. This flatters short
-  premium strategies slightly.
+- **Early assignment IS modeled (extrinsic trigger).** A short leg that is ITM
+  with a live quote whose extrinsic value (mid − intrinsic) falls below
+  `assign_extrinsic` (default $0.03/share) is assigned: the whole position
+  closes (`closed_reason: "assigned"`), assigned legs at intrinsic, the rest at
+  market, plus the assignment fee. Dividend-capture assignment is approximated
+  by this extrinsic rule, not by an ex-div calendar (no dividend data).
 - **Expiry at intrinsic.** Positions reaching expiry settle at intrinsic value
   computed from the last-seen underlying close (cash-settled approximation;
   no pin risk, no assignment fees).
@@ -29,10 +33,13 @@ Each one biases results in a known direction; read this before trusting a number
   European, no dividend yield term unless configured.
 
 ## Costs & carry
-- **Cost of carry** accrues daily at `financing_apr` on capital-at-risk (net
-  debit paid, or modeled max-loss margin for credit structures). This is a
-  simplification of actual Reg-T/portfolio-margin requirements — real margin on
-  undefined-risk structures varies daily with the underlying.
+- **Reg-T-style margin at open.** Capital-at-risk for credit structures is
+  max(modelled max loss, a Reg-T-style requirement): defined-risk spreads carry
+  width − credit; naked shorts carry premium + max(20%·U − OTM, 10%·U for
+  calls / 10%·K for puts). Computed once at open — real margin re-marks daily
+  with the underlying, so a position moving against you would demand more
+  margin than modeled here.
+- **Cost of carry** accrues daily at `financing_apr` on that capital-at-risk.
 - **No borrow costs / dividends** on the underlying (relevant only to covered
   calls, which here approximate the option overlay, not full stock carry).
 
@@ -48,6 +55,15 @@ Each one biases results in a known direction; read this before trusting a number
 - **Quote quality.** Bid/ask are as recorded EOD. Stale or crossed quotes in
   the source pass through the spread-crossing cost model unfiltered.
 
+## Signal gates (equity filters)
+- **On by default** (`use_signals: true`) when equity OHLCV data exists; pure
+  pass-through otherwise, and per-ticker pass-through for tickers without
+  equity data. Bullish structures require close > SMA50, bearish the reverse;
+  short-premium entries require the 20d realized-vol percentile below
+  `rv_entry_max_pct` (default 0.85), long-premium above `rv_entry_min_pct`
+  (default 0.10). **No lookahead:** the gate's decision for day D uses equity
+  data through D−1 only (indicators are shifted one day).
+
 ## Learning loop
 - **Walk-forward, accept-on-OOS.** Parameters are searched on an in-sample
   fold and accepted only when the out-of-sample objective improves. Repeated
@@ -60,6 +76,10 @@ Each one biases results in a known direction; read this before trusting a number
 ## Paper & live
 - **Paper == backtest accounting** (same fill/cost model) by construction, so
   paper results are comparable to backtests — and share the same limitations.
+- **Live marks are quotes, not fills.** When an Alpha Vantage key is configured
+  the paper book marks from realtime option quotes (LIVE pill); otherwise from
+  the latest end-of-day chain (EOD pill). A live mark says what the book is
+  worth, not what you could necessarily execute at.
 - **Live trading is a seam, not a promise.** The IBKR adapter maps legs to
   combo orders but has never placed a real order; validate in IB's paper
   environment first, with tiny size.

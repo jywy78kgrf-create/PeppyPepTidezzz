@@ -112,6 +112,11 @@ BASE_PARAMS = {
     "signal_cooldown": 100,   # one trade per ticker per run
     "min_dte_to_open": 14,
     "min_open_interest": 1,
+    # These tests exercise same-day mechanics (marks/exits/settlement); T+1
+    # fill realism is covered by tests/test_realism.py. The signal gate is
+    # disabled so results do not depend on the optional signals module.
+    "fill_lag": 0,
+    "use_signals": False,
 }
 RISK_1LOT = {"method": "fixed", "fixed_contracts": 1}
 

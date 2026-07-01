@@ -77,3 +77,23 @@ class SuggestionsResponse(BaseModel):
 class BrokersStatusResponse(BaseModel):
     ibkr: dict[str, Any]
     alpha_vantage: dict[str, Any]
+
+
+class PaperBookResponse(BaseModel):
+    """GET /api/paper/positions and POST /api/paper/mark share this shape."""
+    positions: list[dict[str, Any]]
+    equity: dict[str, Any]  # {cash, open_value, upnl, realized, total, starting_cash}
+    live: bool
+    asof: str  # ISO-8601 UTC timestamp of this marking
+
+
+class PaperHistoryPoint(BaseModel):
+    ts: str  # ISO-8601 UTC
+    equity: float
+    cash: float
+    upnl: float
+    live: bool
+
+
+class PaperHistoryResponse(BaseModel):
+    points: list[PaperHistoryPoint]
