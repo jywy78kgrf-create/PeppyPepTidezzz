@@ -36,7 +36,12 @@ function ScoreRing({ score }: { score: number }) {
 }
 
 function Card({ s, i }: { s: Suggestion; i: number }) {
-  const undefinedRisk = s.max_loss < 0
+  // max_profit is null when unlimited (e.g. a long call), max_loss < 0 when
+  // the downside is undefined (naked short premium).
+  const unlimitedProfit = s.max_profit == null || !Number.isFinite(s.max_profit)
+  const undefinedRisk = s.max_loss != null && s.max_loss < 0
+  const pop = Number.isFinite(s.pop) ? s.pop : 0
+  const score = Number.isFinite(s.score) ? s.score : 0
   return (
     <motion.article
       initial={{ opacity: 0, x: -10 }}
@@ -65,15 +70,15 @@ function Card({ s, i }: { s: Suggestion; i: number }) {
             {s.rationale}
           </p>
         </div>
-        <ScoreRing score={s.score} />
+        <ScoreRing score={score} />
       </div>
 
       <div className="mt-2.5 grid grid-cols-3 gap-2 text-center">
-        <Stat label="POP" value={`${Math.round(s.pop * 100)}%`} tone="teal" />
-        <Stat label="Max Profit" value={usd(s.max_profit)} tone="up" />
+        <Stat label="POP" value={`${Math.round(pop * 100)}%`} tone="teal" />
+        <Stat label="Max Profit" value={unlimitedProfit ? '∞' : usd(s.max_profit)} tone="up" />
         <Stat
           label="Max Loss"
-          value={undefinedRisk ? '∞' : usd(Math.abs(s.max_loss))}
+          value={undefinedRisk ? '∞' : usd(Math.abs(s.max_loss ?? 0))}
           tone="down"
         />
       </div>

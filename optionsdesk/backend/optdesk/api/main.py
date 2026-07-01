@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as _dt
 import json
+import math
 from typing import Any, Iterable, Optional
 
 from fastapi import FastAPI, HTTPException, Query
@@ -56,11 +57,19 @@ def store() -> ChainStore:
 # Serialization helpers
 # --------------------------------------------------------------------------- #
 def serialize(obj: Any) -> Any:
-    """Recursively convert dataclasses/dates/enums into JSON-safe values."""
+    """Recursively convert dataclasses/dates/enums into JSON-safe values.
+
+    Non-finite floats (inf/-inf/NaN) are converted to ``None`` — they are not
+    valid JSON, and emitting them makes the browser's ``response.json()`` throw
+    (e.g. a long call's unlimited ``max_profit`` or an infinite ``profit_factor``
+    when there were no losing trades).
+    """
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         return {k: serialize(v) for k, v in dataclasses.asdict(obj).items()}
     if isinstance(obj, (_dt.date, _dt.datetime)):
         return obj.isoformat()
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
     if isinstance(obj, dict):
         return {k: serialize(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
@@ -162,7 +171,7 @@ def backtest(req: BacktestRequest) -> dict:
     summary["trades"] = _sample(
         [serialize(t) for t in result.trades], MAX_TRADES
     )
-    return summary
+    return serialize(summary)
 
 
 # --------------------------------------------------------------------------- #
@@ -180,13 +189,13 @@ def learn(req: LearnRequest) -> dict:
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f"learn failed: {exc}") from exc
-    return {
+    return serialize({
         "best": out["best"],
         "best_params": out["best_params"],
         "objective": out.get("objective", req.objective),
         "folds": out.get("folds"),
-        "history": [serialize(it) for it in out["history"]],
-    }
+        "history": [it for it in out["history"]],
+    })
 
 
 @app.get("/api/learn/stream")

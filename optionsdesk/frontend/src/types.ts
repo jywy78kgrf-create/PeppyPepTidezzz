@@ -11,8 +11,8 @@ export interface Suggestion {
   ticker: string
   score: number
   pop: number // probability of profit, 0..1
-  max_profit: number
-  max_loss: number
+  max_profit: number | null // null = unlimited (e.g. long call)
+  max_loss: number | null // < 0 = undefined risk (naked short premium)
   rationale: string
   tags: string[]
 }
