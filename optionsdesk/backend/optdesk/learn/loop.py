@@ -227,6 +227,11 @@ class LearningLoop:
             },
             "holdout": holdout,
             "regimes": regimes,
+            # multiple-testing transparency: how many parameter candidates were
+            # evaluated to arrive at best_params. The holdout is evaluated
+            # exactly once and is immune; treat OOS scores as optimistic in
+            # proportion to this count.
+            "trials": len(history),
         }
 
     # ------------------------------------------------------------------ #

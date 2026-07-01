@@ -124,7 +124,8 @@ def put_chain(tk: str, day: date, u: float, mid90: float, mid80: float):
 
 
 def run_engine(store, strategy, tickers, start, end, params=None, cost=None):
-    bt = Backtester(store, cost or CostModel())
+    # hand-computed price expectations in this file assume the flat model
+    bt = Backtester(store, cost or CostModel(dynamic_slippage=False))
     p = dict(BASE_PARAMS)
     p.update(params or {})
     return bt.run(strategy, p, tickers, start, end, capital=100_000.0,
@@ -278,7 +279,7 @@ class TestAssignment:
                           "bull_put_spread", ["CRD"], D0, D2, **kw)
         feed = run_engine(FakeStore(self._chains(20.01, 70.0)),
                           "bull_put_spread", ["CRD"], D0, D2,
-                          cost=CostModel(assignment_fee=5.0), **kw)
+                          cost=CostModel(assignment_fee=5.0, dynamic_slippage=False), **kw)
         assert base.trades[0].closed_reason == "assigned"
         assert feed.trades[0].closed_reason == "assigned"
         assert feed.trades[0].costs - base.trades[0].costs == pytest.approx(5.0)

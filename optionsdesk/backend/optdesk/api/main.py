@@ -239,6 +239,7 @@ def learn(req: LearnRequest) -> dict:
         "folds": out.get("folds"),
         "holdout": out.get("holdout"),
         "regimes": out.get("regimes"),
+        "trials": out.get("trials"),
         "history": [it for it in out["history"]],
     })
 

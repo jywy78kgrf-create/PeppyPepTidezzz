@@ -60,6 +60,11 @@ class AutoConfig:
     # entry edge: short premium only when implied > realized vol (VRP > 0)
     require_vrp_for_short_premium: bool = True
 
+    # never sell premium through an earnings report (the classic blowup).
+    # Fail-open: if the calendar can't be fetched, entries are NOT blocked.
+    avoid_earnings_short_premium: bool = True
+    earnings_buffer_days: int = 1        # also avoid reports just past expiry
+
     # trading guardrails
     max_open_positions: int = 5
     max_opens_per_cycle: int = 2
@@ -94,13 +99,20 @@ class AutoPilot:
         self.settings = settings
         self.cfg = config or AutoConfig()
         self.now_fn = now_fn
+        # _lock guards STATE mutations only and is never held across a long
+        # operation (a research batch runs for minutes) — the kill switch must
+        # respond instantly. _tick_gate serializes tick bodies instead (the
+        # heartbeat thread and an enable-kicked thread must not overlap).
         self._lock = threading.RLock()
+        self._tick_gate = threading.Lock()
         self._store = store
         self._state_path = Path(state_path or STATE_DIR / "autopilot.json")
         self._broker_factory = broker_factory or self._default_broker_factory
         self._av_factory = av_factory or self._default_av_factory
         self._learn_fn = learn_fn  # (strategy, tickers, start, end) -> result dict
         self._state = self._load()
+        # earnings calendar cache: (fetch_date, {SYMBOL: [iso dates]} | None)
+        self._earnings_cache: tuple[Optional[date], Optional[dict]] = (None, None)
 
     # ------------------------------------------------------------------ #
     # Lazy default dependencies (kept out of __init__ so tests never touch them)
@@ -211,23 +223,39 @@ class AutoPilot:
     # ------------------------------------------------------------------ #
     def tick(self, now: Optional[datetime] = None) -> None:
         """One scheduler heartbeat. Cheap when nothing is due. Never raises —
-        errors are logged to the activity feed so the loop survives."""
-        now = now or self.now_fn()
-        with self._lock:
-            if not self._state["enabled"] or self._state["breaker"]["tripped"]:
-                return
-            try:
-                if self._due(self._state["last_research"],
-                             timedelta(hours=self.cfg.research_interval_hr), now):
-                    self.run_research_batch(now)
-                if self._state["enabled"] and self._due(
-                        self._state["last_trade_cycle"],
-                        timedelta(minutes=self.cfg.trade_interval_min), now):
-                    self.run_trade_cycle(now)
-            except Exception as exc:  # noqa: BLE001 - the loop must survive
+        errors are logged to the activity feed so the loop survives.
+
+        Non-reentrant: a tick already in progress (e.g. a long research batch)
+        makes concurrent ticks no-ops. The state lock is only taken for short
+        reads/writes, so enable/disable/status NEVER wait on a running batch.
+        """
+        if not self._tick_gate.acquire(blocking=False):
+            return
+        try:
+            now = now or self.now_fn()
+            with self._lock:
+                if not self._state["enabled"] or self._state["breaker"]["tripped"]:
+                    return
+                research_due = self._due(
+                    self._state["last_research"],
+                    timedelta(hours=self.cfg.research_interval_hr), now)
+            if research_due:
+                self.run_research_batch(now)
+            with self._lock:
+                if not self._state["enabled"]:  # killed mid-research
+                    return
+                trade_due = self._due(
+                    self._state["last_trade_cycle"],
+                    timedelta(minutes=self.cfg.trade_interval_min), now)
+            if trade_due:
+                self.run_trade_cycle(now)
+        except Exception as exc:  # noqa: BLE001 - the loop must survive
+            with self._lock:
                 self._log("error", f"{type(exc).__name__}: {exc}")
                 self._save()
-                traceback.print_exc()
+            traceback.print_exc()
+        finally:
+            self._tick_gate.release()
 
     @staticmethod
     def _due(last_iso: Optional[str], interval: timedelta, now: datetime) -> bool:
@@ -248,33 +276,36 @@ class AutoPilot:
 
         now = now or self.now_fn()
         universe = self.store.tickers()
-        if not universe:
+        with self._lock:
+            if not universe:
+                self._state["last_research"] = now.isoformat()
+                self._log("research", "no data in store; skipped")
+                self._save()
+                return None
+
+            strategies = sorted(STRATEGIES)
+            cursor = int(self._state["research_cursor"])
+            strategy = strategies[cursor % len(strategies)]
+            n = max(1, self.cfg.research_batch_tickers)
+            t0 = (cursor // len(strategies)) * n % max(1, len(universe))
+            batch = (universe + universe)[t0:t0 + n][: len(universe)]
+            self._state["research_cursor"] = cursor + 1
             self._state["last_research"] = now.isoformat()
-            self._log("research", "no data in store; skipped")
+
+            # history window: last lookback_days ending at the latest date
+            all_dates = sorted({d for tk in batch
+                                for d in self.store.trading_dates(tk)})
+            if len(all_dates) < 40:
+                self._log("research", f"{strategy} on {batch}: not enough history")
+                self._save()
+                return None
+            end = all_dates[-1]
+            start = max(all_dates[0], end - timedelta(days=self.cfg.lookback_days))
+            self._log("research", f"learning {strategy} on {','.join(batch)} "
+                                  f"({start} -> {end})")
             self._save()
-            return None
 
-        strategies = sorted(STRATEGIES)
-        cursor = int(self._state["research_cursor"])
-        strategy = strategies[cursor % len(strategies)]
-        n = max(1, self.cfg.research_batch_tickers)
-        t0 = (cursor // len(strategies)) * n % max(1, len(universe))
-        batch = (universe + universe)[t0:t0 + n][: len(universe)]
-        self._state["research_cursor"] = cursor + 1
-        self._state["last_research"] = now.isoformat()
-
-        # history window: last lookback_days ending at the store's latest date
-        all_dates = sorted({d for tk in batch for d in self.store.trading_dates(tk)})
-        if len(all_dates) < 40:
-            self._log("research", f"{strategy} on {batch}: not enough history")
-            self._save()
-            return None
-        end = all_dates[-1]
-        start = max(all_dates[0], end - timedelta(days=self.cfg.lookback_days))
-
-        self._log("research", f"learning {strategy} on {','.join(batch)} "
-                              f"({start} -> {end})")
-        self._save()
+        # the long part runs WITHOUT the state lock: kill switch stays live
         result = self._learn(strategy, batch, start, end)
 
         holdout = (result or {}).get("holdout") or {}
@@ -295,9 +326,10 @@ class AutoPilot:
         if h_dd is not None and abs(h_dd) > self.cfg.max_holdout_drawdown:
             reasons.append(f"maxdd={h_dd}")
         if reasons:
-            self._log("research", f"{strategy}: NOT promoted "
-                                  f"({', '.join(reasons)})")
-            self._save()
+            with self._lock:
+                self._log("research", f"{strategy}: NOT promoted "
+                                      f"({', '.join(reasons)})")
+                self._save()
             return None
 
         entry = {
@@ -313,14 +345,16 @@ class AutoPilot:
             "consecutive_losses": 0,
             "active": True,
         }
-        promoted = [p for p in self._state["promoted"]
-                    if not (p["strategy"] == strategy and set(p["tickers"]) == set(batch))]
-        promoted.append(entry)
-        promoted.sort(key=lambda p: p["holdout_score"], reverse=True)
-        self._state["promoted"] = promoted[: self.cfg.max_promoted]
-        self._log("promote", f"{strategy} holdout={entry['holdout_score']} "
-                             f"ret={entry['holdout_return']} on {','.join(batch)}")
-        self._save()
+        with self._lock:
+            promoted = [p for p in self._state["promoted"]
+                        if not (p["strategy"] == strategy
+                                and set(p["tickers"]) == set(batch))]
+            promoted.append(entry)
+            promoted.sort(key=lambda p: p["holdout_score"], reverse=True)
+            self._state["promoted"] = promoted[: self.cfg.max_promoted]
+            self._log("promote", f"{strategy} holdout={entry['holdout_score']} "
+                                 f"ret={entry['holdout_return']} on {','.join(batch)}")
+            self._save()
         return entry
 
     # ------------------------------------------------------------------ #
@@ -330,12 +364,14 @@ class AutoPilot:
         now = now or self.now_fn()
         broker = self._broker_factory()
 
-        # 1) mark the book (live when AV resolves, EOD otherwise)
+        # 1) mark the book (live when AV resolves, EOD otherwise) — network
+        #    I/O stays OUTSIDE the state lock so the kill switch never waits.
         try:
             mark = broker.mark_live(self._av_factory(), self.store)
             live = bool(mark.get("live"))
         except Exception as exc:  # noqa: BLE001
-            self._log("error", f"mark failed: {exc}")
+            with self._lock:
+                self._log("error", f"mark failed: {exc}")
             live = False
         try:
             broker.snapshot(live=live)
@@ -344,6 +380,14 @@ class AutoPilot:
 
         equity = broker.equity()
         total = float(equity.get("total", 0.0))
+
+        with self._lock:
+            if not self._state["enabled"]:  # killed while marking
+                return
+            self._trade_cycle_locked(broker, now, total)
+
+    def _trade_cycle_locked(self, broker, now: datetime, total: float) -> None:
+        """Breaker check, exits, and opens — fast, under the state lock."""
 
         # 2) circuit breaker on the day's anchor
         today = now.date().isoformat()
@@ -439,6 +483,12 @@ class AutoPilot:
                     underlying = next((q.underlying for q in chain if q.underlying > 0), 0.0)
                     spec = builder(chain, underlying, dict(config.get("params") or {}))
                     if spec is None:
+                        continue
+                    min_expiry = min(leg.expiry for leg in spec.legs)
+                    if not self._earnings_ok(tku, min_expiry,
+                                             config["strategy"], now):
+                        self._log("skip", f"{tku} {config['strategy']}: earnings "
+                                          f"report inside holding window")
                         continue
                     unit_risk = unit_risk_for(spec, equity_total, rc)
                     desired = sizer.desired_contracts(spec, equity_total, unit_risk)
@@ -547,6 +597,52 @@ class AutoPilot:
         except ImportError:
             return True
         return True if v is None else v > 0.0
+
+    def _earnings_map(self, now: datetime) -> Optional[dict]:
+        """Upcoming report dates, fetched at most once per day; None on any
+        failure (callers fail OPEN — an unknowable calendar blocks nothing)."""
+        today = now.date()
+        cached_day, cached = self._earnings_cache
+        if cached_day == today:
+            return cached
+        result: Optional[dict] = None
+        try:
+            from ..live.alpha_vantage import fetch_earnings_calendar
+            data = fetch_earnings_calendar(self._av_factory())
+            if "earnings" in data:
+                result = data["earnings"]
+            else:
+                self._log("research", f"earnings calendar unavailable "
+                                      f"({data.get('error', 'unknown')[:80]}); "
+                                      f"gate failing open")
+        except Exception:  # noqa: BLE001 - never let the gate break a cycle
+            result = None
+        self._earnings_cache = (today, result)
+        return result
+
+    def _earnings_ok(self, ticker: str, expiry: date, strategy: str,
+                     now: datetime) -> bool:
+        """False when a short-premium entry would hold through an earnings
+        report (today .. expiry + buffer). Long premium is unaffected —
+        buying vol into earnings is a choice, not a blowup."""
+        if not self.cfg.avoid_earnings_short_premium:
+            return True
+        if strategy not in self._SHORT_PREMIUM:
+            return True
+        cal = self._earnings_map(now)
+        if not cal:
+            return True  # fail open
+        dates = cal.get(ticker.upper()) or []
+        lo = now.date()
+        hi = expiry + timedelta(days=self.cfg.earnings_buffer_days)
+        for d in dates:
+            try:
+                rd = date.fromisoformat(d)
+            except ValueError:
+                continue
+            if lo <= rd <= hi:
+                return False
+        return True
 
     def _build_gate(self):
         try:

@@ -153,13 +153,16 @@ class Portfolio:
     def _fill_price(self, q: OptionQuote, action: Action) -> tuple[float, float]:
         """Executable price for a leg and the per-share slippage paid.
 
-        Buys lift toward the ask, sells hit toward the bid, each by
-        ``slippage_frac_of_spread`` of the quoted spread (floored at
-        ``min_slippage``). Falls back to last when a side is missing.
+        Buys lift toward the ask, sells hit toward the bid, by a width-aware
+        fraction of the quoted spread (quant.pricing.slippage_fraction: wide
+        markets pay closer to the far touch), floored at ``min_slippage``.
+        Falls back to last when a side is missing.
         """
+        from ..quant.pricing import slippage_fraction
+
         mid = q.mid if q.mid > 0 else q.last
         spread = q.spread
-        slip = max(self.cost.min_slippage, self.cost.slippage_frac_of_spread * spread)
+        slip = max(self.cost.min_slippage, slippage_fraction(mid, spread, self.cost) * spread)
         if action == Action.BUY:
             price = mid + slip
             if q.ask > 0:
@@ -273,6 +276,23 @@ class Portfolio:
         if u is None and underlying is not None and underlying > 0:
             u = underlying
         return self._net_mark(pos.spec, chain, asof, underlying=u)
+
+    def remark_margin(self, pos: OpenPosition, underlying: float) -> float:
+        """Re-mark a credit position's margin to today's underlying (Reg-T
+        re-marks daily; a naked short moving against you demands more margin,
+        so carry accrues on the live requirement, not the open-day one).
+
+        Defined-risk spreads are unaffected (width - credit is spot-invariant).
+        The stop threshold stays anchored to the OPEN capital-at-risk — margin
+        drift changes financing, not the exit plan. Returns the new figure.
+        """
+        if underlying <= 0 or total_open_premium(pos) <= 0:
+            return pos.capital_at_risk  # debit structures carry the debit paid
+        req = margin_requirement(pos.spec.legs, underlying, pos.open_fills)
+        ml = pos.spec.max_loss
+        floor = ml if (ml and math.isfinite(ml) and ml > 0) else 0.0
+        pos.capital_at_risk = max(req, floor)
+        return pos.capital_at_risk
 
     def accrue_carry(self, pos: OpenPosition, asof: date) -> float:
         """Accrue one day of financing on capital-at-risk; returns the charge."""

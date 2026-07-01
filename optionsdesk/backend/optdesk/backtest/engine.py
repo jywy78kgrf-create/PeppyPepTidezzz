@@ -160,12 +160,15 @@ class Backtester:
                              underlying=last_underlying.get(
                                  tk, pos.spec.meta.get("underlying")))
 
-            # 2) Accrue carry, check early assignment, evaluate managed exits.
+            # 2) Re-mark margin to today's spot, accrue carry on the live
+            #    requirement, check early assignment, evaluate managed exits.
             for pos in list(pf.open_positions):
                 tk = pos.spec.ticker
                 chain = chains.get(tk, [])
-                pf.accrue_carry(pos, day)
                 u = last_underlying.get(tk)
+                if u:
+                    pf.remark_margin(pos, u)
+                pf.accrue_carry(pos, day)
                 reason = self._exit_reason(pos, chain, day, cfg, last_u=u)
                 if reason != "expiry":
                     # Early assignment preempts managed exits (it is involuntary)

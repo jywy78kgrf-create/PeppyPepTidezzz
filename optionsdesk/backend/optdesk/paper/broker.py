@@ -55,8 +55,11 @@ def _fill_price(quote: OptionQuote, action: Action, cost: CostModel) -> float:
     BUY pays above mid, SELL receives below mid — identical to the backtester's
     slippage model.
     """
+    from ..quant.pricing import slippage_fraction
+
     mid = quote.mid
-    slip = max(cost.min_slippage, cost.slippage_frac_of_spread * quote.spread)
+    frac = slippage_fraction(mid, quote.spread, cost)
+    slip = max(cost.min_slippage, frac * quote.spread)
     return round(mid + slip if action == Action.BUY else mid - slip, 4)
 
 

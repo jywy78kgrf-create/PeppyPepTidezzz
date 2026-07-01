@@ -133,8 +133,14 @@ class Trade:
 class CostModel:
     commission_per_contract: float = 0.65     # IBKR-ish
     exchange_fee_per_contract: float = 0.05
-    slippage_frac_of_spread: float = 0.25     # fraction of bid/ask spread paid
+    slippage_frac_of_spread: float = 0.25     # base fraction of spread paid
     min_slippage: float = 0.01                # per share floor
+    # width-aware slippage: wide (illiquid) markets fill closer to the far
+    # touch than penny-wide ones. Effective fraction scales with spread/mid,
+    # clamped to [0.5*base, slippage_frac_max]. Set dynamic_slippage=False to
+    # recover the flat model.
+    dynamic_slippage: bool = True
+    slippage_frac_max: float = 0.45
     financing_apr: float = 0.065              # cost of carry on debit/margin
     borrow_apr: float = 0.0                   # short-stock borrow (assignment)
     assignment_fee: float = 0.0

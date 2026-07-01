@@ -186,3 +186,47 @@ def _to_int(v: Optional[Any]) -> int:
         return int(float(v))
     except (TypeError, ValueError):
         return 0
+
+
+def _parse_earnings_csv(text: str) -> dict[str, list[str]]:
+    """Parse EARNINGS_CALENDAR CSV into {SYMBOL: [reportDate, ...]} (ISO)."""
+    import csv as _csv
+    import io as _io
+
+    out: dict[str, list[str]] = {}
+    reader = _csv.DictReader(_io.StringIO(text))
+    for row in reader:
+        sym = (row.get("symbol") or "").strip().upper()
+        rd = (row.get("reportDate") or "").strip()[:10]
+        if not sym or not rd:
+            continue
+        try:
+            _dt.date.fromisoformat(rd)
+        except ValueError:
+            continue
+        out.setdefault(sym, []).append(rd)
+    return out
+
+
+def fetch_earnings_calendar(av: "AlphaVantage",
+                            horizon: str = "3month") -> dict[str, Any]:
+    """Upcoming earnings report dates for the whole market.
+
+    Alpha Vantage's EARNINGS_CALENDAR returns CSV (not JSON), so it gets its
+    own fetch path. Returns {"earnings": {SYMBOL: [YYYY-MM-DD, ...]}} or
+    {"error": ...} — callers treat errors as unknowable and fail OPEN.
+    """
+    if not av.configured:
+        return {"error": "alpha_vantage_key not configured"}
+    try:
+        resp = httpx.get(av.base_url, params={
+            "function": "EARNINGS_CALENDAR", "horizon": horizon,
+            "apikey": av.key,
+        }, timeout=av.timeout)
+        resp.raise_for_status()
+        text = resp.text
+    except httpx.HTTPError as exc:
+        return {"error": f"http error: {exc!r}"}
+    if text.lstrip().startswith("{"):  # JSON body = throttle/limit note
+        return {"error": text[:200]}
+    return {"earnings": _parse_earnings_csv(text)}

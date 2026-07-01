@@ -10,10 +10,12 @@ Each one biases results in a known direction; read this before trusting a number
   time, the signal is abandoned. Set `fill_lag: 0` to reproduce the older,
   flattering same-close behavior. Sizing/budgeting happens at fill time with
   fill-day equity.
-- **Spread crossing.** Every entry/exit pays `slippage_frac_of_spread` (default
-  25%) of the quoted bid/ask spread, floored at `min_slippage`, plus
-  per-contract commission and exchange fees on every leg, both sides.
-  Marks for open positions use the mid.
+- **Width-aware spread crossing.** Every entry/exit pays a fraction of the
+  quoted bid/ask spread that SCALES with relative width (spread/mid): tight,
+  liquid markets fill near mid (~0.8× the 25% base), wide illiquid markets pay
+  up to `slippage_frac_max` (45%) of the spread — floored at `min_slippage`,
+  plus per-contract commission and exchange fees on every leg, both sides.
+  `dynamic_slippage: false` recovers the flat model. Marks use the mid.
 - **No market impact / size limits.** Fills assume your size doesn't move the
   market and ignores quoted depth. At 1–50 contracts on liquid names this is
   reasonable; at institutional size it is not.
@@ -33,13 +35,13 @@ Each one biases results in a known direction; read this before trusting a number
   European, no dividend yield term unless configured.
 
 ## Costs & carry
-- **Reg-T-style margin at open.** Capital-at-risk for credit structures is
-  max(modelled max loss, a Reg-T-style requirement): defined-risk spreads carry
-  width − credit; naked shorts carry premium + max(20%·U − OTM, 10%·U for
-  calls / 10%·K for puts). Computed once at open — real margin re-marks daily
-  with the underlying, so a position moving against you would demand more
-  margin than modeled here.
-- **Cost of carry** accrues daily at `financing_apr` on that capital-at-risk.
+- **Reg-T-style margin, re-marked daily.** Capital-at-risk for credit
+  structures is max(modelled max loss, a Reg-T-style requirement): defined-risk
+  spreads carry width − credit; naked shorts carry premium + max(20%·U − OTM,
+  10%·U for calls / 10%·K for puts), **recomputed each day at the current
+  underlying** — a naked short moving against you demands more margin and
+  therefore more carry. Stop thresholds stay anchored to the open requirement.
+- **Cost of carry** accrues daily at `financing_apr` on that live requirement.
 - **No borrow costs / dividends** on the underlying (relevant only to covered
   calls, which here approximate the option overlay, not full stock carry).
 
@@ -76,7 +78,20 @@ Each one biases results in a known direction; read this before trusting a number
 ## AutoPilot
 - **Paper only, off by default.** The autonomous loop drives the paper broker
   exclusively; it cannot place real orders. The kill switch must be engaged by
-  a human, and the −3% daily circuit breaker disables it without asking.
+  a human, and the −3% daily circuit breaker disables it without asking. The
+  kill switch is never blocked by a running research batch (state lock is not
+  held across long operations).
+- **Earnings gate (live-only, fail-open).** Short-premium entries are blocked
+  when Alpha Vantage's earnings calendar shows a report between today and the
+  position's expiry (+1 day buffer). Long premium is unaffected. If the
+  calendar cannot be fetched, the gate FAILS OPEN — it blocks nothing rather
+  than silently halting the desk. Backtests do NOT model earnings (no
+  historical calendar data): historical short-premium results include
+  through-earnings trades and are correspondingly flattered/penalized by
+  whatever actually happened.
+- **Multiple-testing transparency.** Learn results report `trials` — how many
+  parameter candidates were evaluated. OOS scores are optimistic in proportion
+  to that count; the holdout (evaluated exactly once) is the defensible number.
 - **Decisions on EOD chains, management on live marks.** New positions are
   constructed from the latest end-of-day chain (the semantics the backtester
   was validated under); exits are evaluated against live Alpha Vantage marks.

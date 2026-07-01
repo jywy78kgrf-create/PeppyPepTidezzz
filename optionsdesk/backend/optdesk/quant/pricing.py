@@ -128,3 +128,24 @@ def spec_mark(spec: StrategySpec, chain: list[OptionQuote], asof: date,
     for leg in spec.legs:
         total += mark_leg(leg, chain, asof, underlying, r) * CONTRACT_MULTIPLIER
     return total
+
+
+def slippage_fraction(mid: float, spread: float, cost) -> float:
+    """Fraction of the quoted spread paid on execution, width-aware.
+
+    A penny-wide SPY market fills near mid; a 30%-of-mid biotech market fills
+    near the far touch. Scale the base fraction by relative spread width
+    (spread/mid), clamped to [0.5*base, cost.slippage_frac_max]:
+
+        rel=1%  -> ~0.8x base      (tight, liquid)
+        rel=10% -> ~1.25x base     (typical single-name wing)
+        rel=30% -> capped          (wide/illiquid)
+
+    ``cost.dynamic_slippage=False`` recovers the flat model exactly.
+    """
+    base = cost.slippage_frac_of_spread
+    if not getattr(cost, "dynamic_slippage", False) or mid <= 0 or spread <= 0:
+        return base
+    rel = spread / mid
+    frac = base * (0.75 + 5.0 * rel)
+    return min(getattr(cost, "slippage_frac_max", 0.45), max(0.5 * base, frac))
