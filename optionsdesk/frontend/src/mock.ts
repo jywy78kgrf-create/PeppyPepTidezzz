@@ -565,3 +565,69 @@ export function mockTape(): Quote[] {
 function clamp(x: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, x))
 }
+
+/* --------------------------------------------------------------------- */
+/*  AutoPilot mocks                                                       */
+/* --------------------------------------------------------------------- */
+import type { AutoActivityEvent, AutoStatus, PromotedConfig } from './types'
+
+let _autoEnabled = false
+
+const AUTO_PROMOTED: PromotedConfig[] = [
+  {
+    id: 'bull_put_spread@mock',
+    strategy: 'bull_put_spread',
+    tickers: ['NVDA', 'MSFT', 'AAPL'],
+    params: { short_delta: 0.28, dte_target: 30, profit_target: 0.55 },
+    holdout_score: 1.12,
+    holdout_return: 0.031,
+    promoted_at: new Date(Date.now() - 3600e3).toISOString(),
+    realized_pnl: 412.5,
+    closed_trades: 3,
+    consecutive_losses: 0,
+    active: true,
+  },
+  {
+    id: 'iron_condor@mock',
+    strategy: 'iron_condor',
+    tickers: ['SPY', 'QQQ'],
+    params: { short_delta: 0.16, dte_target: 21 },
+    holdout_score: 0.74,
+    holdout_return: 0.012,
+    promoted_at: new Date(Date.now() - 7200e3).toISOString(),
+    realized_pnl: -86.2,
+    closed_trades: 2,
+    consecutive_losses: 1,
+    active: true,
+  },
+]
+
+export function mockAutoStatus(): AutoStatus {
+  return {
+    enabled: _autoEnabled,
+    activated_at: _autoEnabled ? new Date(Date.now() - 1800e3).toISOString() : null,
+    last_trade_cycle: _autoEnabled ? new Date(Date.now() - 90e3).toISOString() : null,
+    last_research: new Date(Date.now() - 5400e3).toISOString(),
+    breaker: { tripped: false, reason: null, at: null },
+    promoted: _autoEnabled ? AUTO_PROMOTED : [],
+    managed_positions: _autoEnabled ? 2 : 0,
+    config: { trade_interval_min: 5, daily_loss_limit_frac: 0.03 },
+  }
+}
+
+export function mockAutoToggle(on: boolean): AutoStatus {
+  _autoEnabled = on
+  return mockAutoStatus()
+}
+
+export function mockAutoActivity(): AutoActivityEvent[] {
+  if (!_autoEnabled) return []
+  const now = Date.now()
+  return [
+    { ts: new Date(now - 60e3).toISOString(), kind: 'open', detail: 'NVDA bull_put_spread x2 (risk $1,570, holdout=1.12)' },
+    { ts: new Date(now - 420e3).toISOString(), kind: 'close', detail: 'SPY iron_condor -> target pnl=+84.00' },
+    { ts: new Date(now - 3600e3).toISOString(), kind: 'promote', detail: 'bull_put_spread holdout=1.12 ret=0.031 on NVDA,MSFT,AAPL' },
+    { ts: new Date(now - 5400e3).toISOString(), kind: 'research', detail: 'learning iron_condor on SPY,QQQ' },
+    { ts: new Date(now - 1800e3).toISOString(), kind: 'enable', detail: 'autopilot ENGAGED (kill switch armed)' },
+  ]
+}

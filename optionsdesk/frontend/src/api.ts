@@ -4,6 +4,8 @@
 
 import * as mock from './mock'
 import type {
+  AutoActivityEvent,
+  AutoStatus,
   BacktestResponse,
   BrokerStatus,
   HealthResponse,
@@ -167,6 +169,36 @@ export function closePosition(idx: number): Promise<PaperBookResponse> {
       body: JSON.stringify({ idx }),
     }).then(() => request<PaperBookResponse>('/api/paper/positions')),
     () => mock.mockPaperClose(idx),
+  )
+}
+
+/* ------------------------------ autopilot ------------------------------ */
+
+export function getAutoStatus(): Promise<AutoStatus> {
+  return withFallback(
+    () => request<AutoStatus>('/api/auto/status'),
+    () => mock.mockAutoStatus(),
+  )
+}
+
+export function postAutoEnable(): Promise<AutoStatus> {
+  return withFallback(
+    () => request<AutoStatus>('/api/auto/enable', { method: 'POST', body: '{}' }),
+    () => mock.mockAutoToggle(true),
+  )
+}
+
+export function postAutoDisable(): Promise<AutoStatus> {
+  return withFallback(
+    () => request<AutoStatus>('/api/auto/disable', { method: 'POST', body: '{}' }),
+    () => mock.mockAutoToggle(false),
+  )
+}
+
+export function getAutoActivity(limit = 30): Promise<{ events: AutoActivityEvent[] }> {
+  return withFallback(
+    () => request<{ events: AutoActivityEvent[] }>(`/api/auto/activity?limit=${limit}`),
+    () => ({ events: mock.mockAutoActivity() }),
   )
 }
 

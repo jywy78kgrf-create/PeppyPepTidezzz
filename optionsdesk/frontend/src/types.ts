@@ -194,6 +194,40 @@ export interface PaperHistoryResponse {
 }
 
 /* --------------------------------------------------------------------- */
+/*  AutoPilot                                                             */
+/* --------------------------------------------------------------------- */
+export interface PromotedConfig {
+  id: string
+  strategy: string
+  tickers: string[]
+  params: Record<string, number>
+  holdout_score: number
+  holdout_return: number | null
+  promoted_at: string
+  realized_pnl: number
+  closed_trades: number
+  consecutive_losses: number
+  active: boolean
+}
+
+export interface AutoStatus {
+  enabled: boolean
+  activated_at: string | null
+  last_trade_cycle: string | null
+  last_research: string | null
+  breaker: { tripped: boolean; reason: string | null; at: string | null }
+  promoted: PromotedConfig[]
+  managed_positions: number
+  config: Record<string, unknown>
+}
+
+export interface AutoActivityEvent {
+  ts: string
+  kind: string // enable | disable | research | promote | open | close | demote | breaker | error
+  detail: string
+}
+
+/* --------------------------------------------------------------------- */
 /*  Misc                                                                  */
 /* --------------------------------------------------------------------- */
 export interface BrokerStatus {

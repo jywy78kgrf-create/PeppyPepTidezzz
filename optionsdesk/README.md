@@ -122,6 +122,26 @@ vars. The `brokers/ibkr.py` seam maps strategy legs to IB option combos. Paper
 trading uses the identical fill/cost accounting as the backtester, so promotion
 is apples-to-apples.
 
+## AutoPilot — the autonomous loop
+
+The desk can drive itself (**paper only**): on a schedule it re-runs the
+learner across the universe, **promotes** configs whose *holdout* clears the
+bar, **auto-opens** paper positions for the winners (sized by the risk budget,
+gated by the equity signals), **manages** them with the same target/stop/DTE
+exits as the backtester, and **feeds realized results back** — configs that
+keep losing live get demoted. Controls, all in the Paper panel:
+
+- **ENGAGE / KILL** — the kill switch. Off by default; one click stops all
+  action before the next tick.
+- **Circuit breaker** — a −3% day on the paper book trips the pilot and
+  disables it until a human re-engages.
+- Guardrails: max 5 open positions, ≤2 opens/cycle, 24h per-ticker cooldown,
+  and it never touches positions you opened manually.
+
+API: `GET /api/auto/status`, `POST /api/auto/enable|disable`,
+`GET /api/auto/activity`. The pilot only ever talks to the paper broker — the
+IBKR adapter is untouched by design.
+
 ## Trusting the numbers
 
 Every modeling assumption (execution, assignment, carry, survivorship, the

@@ -467,6 +467,45 @@ def paper_close(req: PaperCloseRequest) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# AutoPilot — autonomous research/promote/paper-trade loop (paper ONLY)
+# --------------------------------------------------------------------------- #
+@app.on_event("startup")
+def _start_autopilot() -> None:
+    """Start the heartbeat thread; the pilot stays idle until enabled."""
+    from ..auto import get_pilot
+    get_pilot()
+
+
+@app.get("/api/auto/status")
+def auto_status() -> dict:
+    from ..auto import get_pilot
+    return serialize(get_pilot().status())
+
+
+@app.post("/api/auto/enable")
+def auto_enable() -> dict:
+    from ..auto import get_pilot
+    pilot = get_pilot()
+    status = pilot.enable()
+    # kick an immediate cycle in the background so enabling feels alive
+    import threading
+    threading.Thread(target=pilot.tick, daemon=True).start()
+    return serialize(status)
+
+
+@app.post("/api/auto/disable")
+def auto_disable() -> dict:
+    from ..auto import get_pilot
+    return serialize(get_pilot().disable("kill switch (user)"))
+
+
+@app.get("/api/auto/activity")
+def auto_activity(limit: int = Query(50, ge=1, le=200)) -> dict:
+    from ..auto import get_pilot
+    return {"events": serialize(get_pilot().activity(limit))}
+
+
+# --------------------------------------------------------------------------- #
 # Live data & broker status
 # --------------------------------------------------------------------------- #
 @app.get("/api/live/quote")

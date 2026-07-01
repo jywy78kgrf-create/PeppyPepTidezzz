@@ -73,6 +73,20 @@ Each one biases results in a known direction; read this before trusting a number
 - **No regime awareness.** 4.5 years is one macro regime sample. A strategy
   tuned on 2021–2026 embeds that period's vol structure.
 
+## AutoPilot
+- **Paper only, off by default.** The autonomous loop drives the paper broker
+  exclusively; it cannot place real orders. The kill switch must be engaged by
+  a human, and the −3% daily circuit breaker disables it without asking.
+- **Decisions on EOD chains, management on live marks.** New positions are
+  constructed from the latest end-of-day chain (the semantics the backtester
+  was validated under); exits are evaluated against live Alpha Vantage marks.
+  If your historical store is stale, the pilot is trading yesterday's chain —
+  keep the data current.
+- **Promotion is holdout-gated, not backtest-gated.** A config trades only if
+  the learner's untouched final holdout cleared the bar — but a good holdout
+  on 4.5 years still guarantees nothing about next week. That is precisely
+  what the paper phase exists to measure.
+
 ## Paper & live
 - **Paper == backtest accounting** (same fill/cost model) by construction, so
   paper results are comparable to backtests — and share the same limitations.
