@@ -23,6 +23,9 @@ services:
     volumes:
       - ./data:/app/data        # your option chains + universe (bind mount)
       - paperstate:/app/.state  # persisted paper-trading book
+      # raw source data for the importer (read-only). Set MERIDIAN_DATA in .env
+      # to the ABSOLUTE path of your ~/.meridian-data folder.
+      - ${MERIDIAN_DATA:-./data/raw}:/app/data/raw:ro
     ports:
       - "${BACKEND_PORT:-8000}:8000"   # direct API access (optional; SPA uses the proxy)
     extra_hosts:
