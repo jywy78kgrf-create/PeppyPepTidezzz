@@ -122,6 +122,18 @@ vars. The `brokers/ibkr.py` seam maps strategy legs to IB option combos. Paper
 trading uses the identical fill/cost accounting as the backtester, so promotion
 is apples-to-apples.
 
+## Trusting the numbers
+
+Every modeling assumption (execution, assignment, carry, survivorship, the
+learning loop's optimism) is documented in **`docs/ASSUMPTIONS.md`** with the
+direction it biases results. The backend ships a pytest suite (`backend/tests/`)
+covering greeks parity, cost-accounting identity, exit-trigger direction,
+survivorship force-close, and risk-cap enforcement:
+
+```bash
+cd optionsdesk/backend && python -m pytest tests -q
+```
+
 > Research / educational tooling. Options trading carries substantial risk;
 > backtested performance is not indicative of future results. Review every
 > model and cost assumption before risking capital.
