@@ -37,10 +37,24 @@ import json
 import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from datetime import timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+# fixed on-disk schema so we can stream row-groups (one day at a time) into a
+# single Parquet per symbol without ever holding the whole symbol in memory.
+CANON_ORDER = ["ticker", "asof", "expiry", "strike", "option_type", "bid", "ask",
+               "last", "volume", "open_interest", "implied_volatility", "delta",
+               "gamma", "theta", "vega", "rho", "underlying_close"]
+_STR = {"ticker", "asof", "expiry", "option_type"}
+PARQUET_SCHEMA = pa.schema([
+    (c, pa.string() if c in _STR else pa.float64()) for c in CANON_ORDER
+])
 
 from ..config import CHAINS_DIR, DATA_DIR, UNIVERSE_DIR
 
@@ -248,22 +262,88 @@ def _load_symbol(src: Path, sym_dir: Path) -> pd.DataFrame | None:
     return pd.concat(frames, ignore_index=True)
 
 
-def _worker(src_str: str, sym_dir_str: str, out_dir_str: str):
-    """Process one symbol end-to-end (load -> normalize -> write parquet).
+def _chunk_to_table(df: pd.DataFrame, ticker: str, asof_default: str,
+                    eq: dict) -> pa.Table | None:
+    """Normalize one day's records into a schema-conformant Arrow table."""
+    df["ticker"] = ticker
+    if "asof" not in df.columns:
+        df["asof"] = asof_default
+    if "underlying_close" not in df.columns or df["underlying_close"].isna().all():
+        df["underlying_close"] = eq.get(asof_default, np.nan)
 
-    Runs in a separate process; returns (ticker, first, last, nrows) or None.
+    a = pd.to_datetime(df["asof"], errors="coerce")
+    e = pd.to_datetime(df["expiry"], errors="coerce")
+    strike = pd.to_numeric(df["strike"], errors="coerce")
+    valid = a.notna() & e.notna() & strike.notna()
+    if not valid.any():
+        return None
+    df = df.loc[valid].copy()
+    df["asof"] = a[valid].dt.strftime("%Y-%m-%d")
+    df["expiry"] = e[valid].dt.strftime("%Y-%m-%d")
+    df["strike"] = strike[valid]
+    df["option_type"] = _norm_option_type(df["option_type"])
+    for c in ("bid", "ask", "last", "volume", "open_interest", *GREEKS,
+              "underlying_close"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = _fix_iv(df)
+    out = df.reindex(columns=CANON_ORDER)
+    for c in _STR:
+        out[c] = out[c].astype("string")
+    return pa.Table.from_pandas(out, schema=PARQUET_SCHEMA, preserve_index=False)
+
+
+def _worker(src_str: str, sym_dir_str: str, out_dir_str: str):
+    """Process one symbol by STREAMING each day's chain straight to Parquet.
+
+    Runs in a separate process. Peak memory is ~one day of contracts, so large
+    symbols (ETFs/megacaps with millions of rows) can't OOM the pool. Returns
+    (ticker, first, last, nrows) or None.
     """
     src, sym_dir, out_dir = Path(src_str), Path(sym_dir_str), Path(out_dir_str)
     ticker = sym_dir.name.upper()
-    raw = _load_symbol(src, sym_dir)
-    if raw is None or raw.empty:
+    eq = _equity_close_map(src, sym_dir.name)
+    tmp = out_dir / f".{ticker}.parquet.tmp"
+    final = out_dir / f"{ticker}.parquet"
+
+    writer = None
+    nrows = 0
+    first = last = None
+    try:
+        for f in sorted(sym_dir.glob("*.json*")):
+            asof = f.name.split(".")[0]
+            try:
+                obj = _read_gz_json(f) if f.suffix == ".gz" else json.loads(f.read_text())
+            except Exception:  # noqa: BLE001
+                continue
+            recs = _records_from_json(obj)
+            if not recs:
+                continue
+            df = _canon(pd.json_normalize(recs))
+            if any(c not in df.columns for c in REQUIRED):
+                continue
+            table = _chunk_to_table(df, ticker, asof, eq)
+            if table is None or table.num_rows == 0:
+                continue
+            if writer is None:
+                writer = pq.ParquetWriter(tmp, PARQUET_SCHEMA, compression="zstd")
+            writer.write_table(table)
+            nrows += table.num_rows
+            first = asof if first is None else min(first, asof)
+            last = asof if last is None else max(last, asof)
+    finally:
+        if writer is not None:
+            writer.close()
+
+    if writer is None or nrows == 0:
+        if tmp.exists():
+            tmp.unlink()
         return None
-    df = _normalize(raw)
-    if df.empty:
-        return None
-    df = df.sort_values(["asof", "expiry", "strike"])
-    df.to_parquet(out_dir / f"{ticker}.parquet", index=False)
-    return (ticker, df["asof"].min(), df["asof"].max(), len(df))
+    os.replace(tmp, final)
+    from datetime import date as _date
+    fd = _date.fromisoformat(first)
+    ld = _date.fromisoformat(last)
+    return (ticker, fd, ld, nrows)
 
 
 def _normalize(df: pd.DataFrame) -> pd.DataFrame:
@@ -340,29 +420,35 @@ def main() -> None:
         else:
             tasks.append(sd)
 
-    workers = args.workers or min(6, os.cpu_count() or 4)
+    workers = args.workers or min(4, os.cpu_count() or 2)
     print(f"Importing from {opt_dir}\n"
           f"{len(tasks)} symbol(s) to process, {len(existing)} already present, "
-          f"{workers} workers\n")
+          f"{workers} workers (streaming; --workers to tune)\n")
 
     spans: dict[str, tuple] = {}
+    failed: list[str] = []
     done = 0
-    with ProcessPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(_worker, str(src), str(sd), str(CHAINS_DIR)): sd.name
-                for sd in tasks}
-        for fut in as_completed(futs):
-            done += 1
-            try:
-                res = fut.result()
-            except Exception as exc:  # noqa: BLE001
-                print(f"  ! {futs[fut]}: {exc}  ({done}/{len(tasks)})")
-                continue
-            if res:
-                tk, first, last, nrows = res
-                spans[tk] = (first, last)
-                print(f"  + {tk}: {nrows:,} rows  ({done}/{len(tasks)})")
-            else:
-                print(f"  - {futs[fut]}: no usable chains  ({done}/{len(tasks)})")
+    try:
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(_worker, str(src), str(sd), str(CHAINS_DIR)): sd.name
+                    for sd in tasks}
+            for fut in as_completed(futs):
+                done += 1
+                try:
+                    res = fut.result()
+                except Exception as exc:  # noqa: BLE001
+                    failed.append(futs[fut])
+                    print(f"  ! {futs[fut]}: {exc}  ({done}/{len(tasks)})")
+                    continue
+                if res:
+                    tk, first, last, nrows = res
+                    spans[tk] = (first, last)
+                    print(f"  + {tk}: {nrows:,} rows  ({done}/{len(tasks)})")
+                else:
+                    print(f"  - {futs[fut]}: no usable chains  ({done}/{len(tasks)})")
+    except BrokenProcessPool:
+        print("\n! worker pool broke (likely out of memory). Re-run with the "
+              "same command + '--skip-existing --workers 2' to finish the rest.")
 
     # fold in already-present tickers (cheap: read only the asof column)
     for tk, out in existing:
@@ -379,9 +465,13 @@ def main() -> None:
     uni = derive_universe(spans, global_last, args.delist_gap_days)
     uni.to_csv(UNIVERSE_DIR / "universe.csv", index=False)
     delisted = (uni["delisted"].astype(str).str.len() > 0).sum()
-    print(f"\nWrote {n} ticker file(s) to {CHAINS_DIR}")
+    print(f"\nStore now holds {n} ticker file(s) in {CHAINS_DIR}")
     print(f"Universe: {len(uni)} tickers ({delisted} derived delisted) "
           f"-> {UNIVERSE_DIR / 'universe.csv'}")
+    if failed:
+        print(f"\n{len(failed)} symbol(s) did not finish: {', '.join(sorted(failed))}")
+        print("Re-run to pick them up:  ...import_data --src /app/data/raw "
+              "--skip-existing --workers 2")
     print("\nRestart the backend to load it:  docker compose restart backend")
 
 
