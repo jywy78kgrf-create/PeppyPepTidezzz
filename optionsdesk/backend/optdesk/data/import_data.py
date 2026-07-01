@@ -76,10 +76,15 @@ GREEKS = ("delta", "gamma", "theta", "vega", "rho", "implied_volatility")
 # Column mapping helpers
 # --------------------------------------------------------------------------- #
 def _canon(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename source columns to canonical names, deterministically and without
+    collisions (e.g. records carrying BOTH ``last`` and ``mark`` must not both
+    map onto ``last`` and create a duplicate column)."""
     lower = {str(c).lower().strip(): c for c in df.columns}
     rename: dict[str, str] = {}
     for canon, aliases in ALIASES.items():
-        for a in aliases:
+        if canon in lower:            # canonical column already present — keep it
+            continue
+        for a in sorted(aliases):     # sorted -> deterministic pick
             if a in lower:
                 rename[lower[a]] = canon
                 break
