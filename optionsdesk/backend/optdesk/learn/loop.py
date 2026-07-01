@@ -25,16 +25,25 @@ from ..contracts import BacktestResult, LearnIteration
 from ..data.loader import ChainStore
 from ..strategies.library import STRATEGIES
 
-# Objective key -> field on BacktestMetrics (higher is better for all of these,
-# drawdown is negated so "less drawdown" scores higher).
+# Objective key -> field on BacktestMetrics (higher is better for all of these).
+# Note: the engine reports max_drawdown as a NEGATIVE number (peak-to-trough
+# fraction), so calmar must divide by its magnitude — dividing by the signed
+# value (or gating on ``> 0``) silently degrades calmar to plain CAGR.
 _OBJECTIVES: dict[str, Callable[[Any], float]] = {
     "sortino": lambda m: m.sortino,
     "sharpe": lambda m: m.sharpe,
     "cagr": lambda m: m.cagr,
     "total_return": lambda m: m.total_return,
     "profit_factor": lambda m: m.profit_factor,
-    "calmar": lambda m: (m.cagr / m.max_drawdown) if m.max_drawdown > 0 else m.cagr,
+    "calmar": lambda m: (m.cagr / abs(m.max_drawdown)) if abs(m.max_drawdown) > 1e-12 else m.cagr,
 }
+
+# Fraction of the full date range reserved as a final, untouched holdout.
+# The evolutionary loop accepts candidates on repeated peeks at the same OOS
+# window, so ``best_params`` are themselves selected on OOS — reporting that
+# OOS score as "out of sample" overstates it.  The holdout is never evaluated
+# during the search; ``best_params`` are scored on it exactly once at the end.
+_HOLDOUT_FRAC = 0.15
 
 # Default search space: (low, high, is_int) per known parameter name.  Unknown
 # numeric params are perturbed multiplicatively around their default.
@@ -83,7 +92,11 @@ class LearningLoop:
         """Run the walk-forward search and return best params + history.
 
         Returns ``{"best_params", "history": [LearnIteration...], "best":
-        BacktestResult.to_summary()}``.
+        BacktestResult.to_summary()}`` plus (additive) ``"holdout"``: the final
+        ~15% of ``[start, end]`` is reserved before the search begins, never
+        evaluated during it, and ``best_params`` are scored on it exactly once
+        at the end — a defensible out-of-sample estimate, unlike the search's
+        own OOS window which is peeked at every iteration.
         """
         if strategy_name not in STRATEGIES:
             raise ValueError(f"unknown strategy {strategy_name!r}")
@@ -92,7 +105,8 @@ class LearningLoop:
             raise ValueError(f"unknown objective {objective!r}")
 
         rng = random.Random(seed)
-        is_start, is_end, oos_start, oos_end = self._fold(start, end)
+        search_start, search_end, holdout_start, holdout_end = self._holdout_split(start, end)
+        is_start, is_end, oos_start, oos_end = self._fold(search_start, search_end)
 
         base_params = self._default_params(strategy_name)
         bounds = self._space(base_params)
@@ -163,6 +177,25 @@ class LearningLoop:
             if on_iter is not None:
                 on_iter(it)
 
+        # --- final holdout evaluation (search is over; peek exactly once) ---
+        if holdout_start is not None and holdout_end is not None:
+            h_res = self._backtest(strategy_name, best_params, tickers,
+                                   holdout_start, holdout_end)
+            h_score = score_of(h_res.metrics)
+            holdout = {
+                "start": holdout_start.isoformat(),
+                "end": holdout_end.isoformat(),
+                "score": round(h_score, 4) if math.isfinite(h_score) else None,
+                "summary": h_res.to_summary(),
+                "note": ("final ~15% of the range, reserved before the search "
+                         "and evaluated exactly once on best_params"),
+            }
+        else:
+            holdout = {
+                "start": None, "end": None, "score": None, "summary": None,
+                "note": "range too short to reserve a holdout",
+            }
+
         return {
             "best_params": best_params,
             "history": history,
@@ -171,12 +204,31 @@ class LearningLoop:
             "folds": {
                 "in_sample": [is_start.isoformat(), is_end.isoformat()],
                 "out_of_sample": [oos_start.isoformat(), oos_end.isoformat()],
+                "holdout": ([holdout["start"], holdout["end"]]
+                            if holdout_start is not None else None),
             },
+            "holdout": holdout,
         }
 
     # ------------------------------------------------------------------ #
     # Search internals
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _holdout_split(start: date, end: date) -> tuple[date, date, Optional[date], Optional[date]]:
+        """Carve the final ``_HOLDOUT_FRAC`` of ``[start, end]`` off the search range.
+
+        Returns ``(search_start, search_end, holdout_start, holdout_end)``.
+        The holdout begins strictly after the search range ends, so neither the
+        IS nor the (repeatedly peeked) OOS fold can touch it.  Windows too short
+        to split sensibly get no holdout (``None, None``).
+        """
+        span = (end - start).days
+        holdout_days = int(round(span * _HOLDOUT_FRAC))
+        if span < 20 or holdout_days < 2:
+            return start, end, None, None
+        search_end = end - timedelta(days=holdout_days)
+        return start, search_end, search_end + timedelta(days=1), end
+
     @staticmethod
     def _fold(start: date, end: date) -> tuple[date, date, date, date]:
         """Split the window 70/30 into in-sample / out-of-sample folds."""

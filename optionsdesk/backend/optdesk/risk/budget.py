@@ -47,6 +47,23 @@ class RiskBudget:
         else:
             self._sector = lambda t: "UNKNOWN"
 
+    def _sector_bucket(self, ticker: str) -> str:
+        """Concentration bucket for ``ticker``; unknown sectors are per-ticker.
+
+        Lumping every unmapped ticker into one shared "UNKNOWN" sector would
+        make ``per_sector_frac`` bind across the *entire* book whenever sector
+        metadata is missing (e.g. a universe where every name has
+        sector=UNKNOWN), spuriously blocking unrelated trades.  A ticker whose
+        sector is unknown therefore gets its own private bucket
+        (``__<ticker>``), so the sector cap only ever aggregates tickers with a
+        *known, shared* sector.  Per-ticker concentration is still enforced by
+        ``per_ticker_frac``.
+        """
+        sec = self._sector(ticker)
+        if not sec or str(sec).strip().upper() == "UNKNOWN":
+            return f"__{ticker.upper()}"
+        return str(sec)
+
     # ------------------------------------------------------------------ #
     def fit(self, spec: StrategySpec, desired: int, unit_risk: float,
             equity: float, open_positions: Iterable, *,
@@ -66,11 +83,11 @@ class RiskBudget:
 
         committed = sum(getattr(p, "capital_at_risk", 0.0) for p in positions)
         tk = spec.ticker.upper()
-        sec = self._sector(tk)
+        sec = self._sector_bucket(tk)
         ticker_committed = sum(getattr(p, "capital_at_risk", 0.0) for p in positions
                                if p.spec.ticker.upper() == tk)
         sector_committed = sum(getattr(p, "capital_at_risk", 0.0) for p in positions
-                               if self._sector(p.spec.ticker.upper()) == sec)
+                               if self._sector_bucket(p.spec.ticker.upper()) == sec)
 
         remaining_portfolio = max(0.0, equity * c.portfolio_risk_frac - committed)
         per_position_cap = equity * c.max_position_frac

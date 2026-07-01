@@ -68,16 +68,27 @@ class RiskConfig:
 def unit_risk_for(spec: StrategySpec, equity: float, cfg: RiskConfig) -> float:
     """Dollar risk of a single 1-lot of ``spec`` (basis for sizing).
 
-    Uses ``spec.max_loss`` when it is finite and positive; otherwise falls back
-    to ``default_unit_risk_frac`` of equity so undefined-risk structures (e.g.
-    naked short premium, covered calls marked stock-to-zero) still size sanely.
+    Three explicit branches:
+
+    1. ``spec.max_loss`` finite, positive and plausible -> use it as-is
+       (normal defined-risk structures such as spreads and condors).
+    2. finite/positive but pathologically large -> cap at **5x** the
+       default-fraction risk (``5 * default_unit_risk_frac * equity``).  This
+       covers structures whose theoretical max loss is real but not practical
+       for sizing (e.g. a covered call marked stock-to-zero) without starving
+       them to zero contracts.
+    3. missing, non-positive or infinite ``max_loss`` -> fall back to
+       ``default_unit_risk_frac`` of equity (floored at $1) so undefined-risk
+       structures (naked short premium) still size sanely.
     """
+    fallback = max(cfg.default_unit_risk_frac * equity, 1.0)
     ml = spec.max_loss
-    if ml is not None and math.isfinite(ml) and ml > 0:
-        # guard pathological huge max_loss (stock-to-zero) against starving size
-        cap = max(cfg.default_unit_risk_frac * equity, 1.0)
-        return min(ml, max(cap, ml if ml < 5 * cap else cap))
-    return max(cfg.default_unit_risk_frac * equity, 1.0)
+    if ml is None or not math.isfinite(ml) or ml <= 0:
+        return fallback              # branch 3: undefined / degenerate risk
+    pathological_cap = 5.0 * fallback
+    if ml > pathological_cap:
+        return pathological_cap      # branch 2: stock-to-zero style max loss
+    return float(ml)                 # branch 1: trust the structure's max loss
 
 
 class PositionSizer:

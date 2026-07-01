@@ -63,19 +63,28 @@ def serialize(obj: Any) -> Any:
     valid JSON, and emitting them makes the browser's ``response.json()`` throw
     (e.g. a long call's unlimited ``max_profit`` or an infinite ``profit_factor``
     when there were no losing trades).
+
+    numpy scalars (``np.int64``/``np.float64``/``np.bool_``) are coerced to
+    native Python via ``.item()`` — ``json.dumps`` rejects ``np.int64``, and
+    learn-loop param mutation / pandas-backed data can leak them into payloads.
     """
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         return {k: serialize(v) for k, v in dataclasses.asdict(obj).items()}
     if isinstance(obj, (_dt.date, _dt.datetime)):
         return obj.isoformat()
-    if isinstance(obj, float):
-        return obj if math.isfinite(obj) else None
+    if isinstance(obj, float):  # includes np.float64 (a float subclass)
+        return float(obj) if math.isfinite(obj) else None
     if isinstance(obj, dict):
         return {k: serialize(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [serialize(v) for v in obj]
     if hasattr(obj, "value") and isinstance(getattr(obj, "value"), (str, int)):
         return obj.value  # Enum
+    if hasattr(obj, "item") and not isinstance(obj, (str, bytes)):
+        try:
+            return serialize(obj.item())  # numpy scalar -> native Python
+        except Exception:  # noqa: BLE001 - non-scalar .item(); pass through
+            return obj
     return obj
 
 
@@ -194,6 +203,7 @@ def learn(req: LearnRequest) -> dict:
         "best_params": out["best_params"],
         "objective": out.get("objective", req.objective),
         "folds": out.get("folds"),
+        "holdout": out.get("holdout"),
         "history": [it for it in out["history"]],
     })
 
@@ -208,31 +218,51 @@ def learn_stream(
     objective: str = "sortino",
     seed: int = 7,
 ) -> StreamingResponse:
-    """Server-sent events: one event per learning iteration as it completes."""
+    """Server-sent events: one event per learning iteration as it completes.
+
+    The loop runs in a worker thread that pushes serialized events through a
+    queue; the response generator yields them as they arrive.  This streams
+    for real — the first iteration reaches the client while the search is
+    still running, instead of every event being buffered until the whole loop
+    has finished.
+    """
+    import queue
+    import threading
+
     from ..learn.loop import LearningLoop
 
     tick_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
     s_start, s_end = _parse_date(start), _parse_date(end)
 
     def gen() -> Iterable[str]:
-        events: list[str] = []
+        q: queue.Queue = queue.Queue()
+        sentinel = object()  # marks worker completion
 
         def on_iter(it) -> None:
-            events.append("data: " + json.dumps(serialize(it)) + "\n\n")
+            q.put("data: " + json.dumps(serialize(it)) + "\n\n")
 
-        loop = LearningLoop(store(), SETTINGS)
-        try:
-            out = loop.run(
-                strategy, tick_list, s_start, s_end,
-                n_iter=n_iter, objective=objective, seed=seed, on_iter=on_iter,
-            )
-        except Exception as exc:  # noqa: BLE001
-            yield "data: " + json.dumps({"error": str(exc)}) + "\n\n"
-            return
-        yield from events
-        yield "event: done\ndata: " + json.dumps(
-            {"best": out["best"], "best_params": out["best_params"]}
-        ) + "\n\n"
+        def work() -> None:
+            loop = LearningLoop(store(), SETTINGS)
+            try:
+                out = loop.run(
+                    strategy, tick_list, s_start, s_end,
+                    n_iter=n_iter, objective=objective, seed=seed, on_iter=on_iter,
+                )
+                q.put("event: done\ndata: " + json.dumps(serialize(
+                    {"best": out["best"], "best_params": out["best_params"],
+                     "holdout": out.get("holdout")}
+                )) + "\n\n")
+            except Exception as exc:  # noqa: BLE001
+                q.put("data: " + json.dumps({"error": str(exc)}) + "\n\n")
+            finally:
+                q.put(sentinel)
+
+        threading.Thread(target=work, daemon=True).start()
+        while True:
+            item = q.get()
+            if item is sentinel:
+                break
+            yield item
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

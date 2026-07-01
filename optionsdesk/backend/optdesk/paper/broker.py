@@ -83,10 +83,27 @@ class PaperBroker:
         if not self.path.exists():
             self._save()
             return
-        data = json.loads(self.path.read_text())
-        self._cash = float(data.get("cash", self._starting_cash))
-        self._starting_cash = float(data.get("starting_cash", self._starting_cash))
-        self._positions = [self._pos_from_dict(p) for p in data.get("positions", [])]
+        try:
+            data = json.loads(self.path.read_text())
+            cash = float(data.get("cash", self._starting_cash))
+            starting = float(data.get("starting_cash", self._starting_cash))
+            positions = [self._pos_from_dict(p) for p in data.get("positions", [])]
+        except Exception:  # noqa: BLE001 - corrupt/partial state must not crash the API
+            # Preserve the unreadable file for forensics, then start fresh.
+            self._backup_corrupt()
+            self._save()
+            return
+        self._cash = cash
+        self._starting_cash = starting
+        self._positions = positions
+
+    def _backup_corrupt(self) -> None:
+        """Move an unreadable state file aside as ``paper.json.corrupt-<ts>``."""
+        try:
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            self.path.replace(self.path.with_name(f"{self.path.name}.corrupt-{ts}"))
+        except OSError:
+            pass  # best effort; a fresh _save() will overwrite in place
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

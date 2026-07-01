@@ -400,10 +400,13 @@ def short_straddle(chain: list[OptionQuote], underlying: float,
     sigma = effective_iv(c, p["r"])
     move = underlying * sigma * math.sqrt(max(T, 1e-6))
     max_loss = max(0.0, move * CONTRACT_MULTIPLIER - max_profit)
-    pop = _pop_from_d2(underlying, c.strike + credit / CONTRACT_MULTIPLIER, T, p["r"],
-                       sigma, profit_if_above=False) * 0.5 + \
-        _pop_from_d2(underlying, pu.strike - credit / CONTRACT_MULTIPLIER, T, p["r"],
-                     sigma, profit_if_above=True) * 0.5
+    # P(profit) = P(finish inside the breakeven band) = P(below upper BE) +
+    # P(above lower BE) - 1 (same inclusion-exclusion as the iron condor).
+    pop = max(0.0,
+              _pop_from_d2(underlying, c.strike + credit / CONTRACT_MULTIPLIER, T, p["r"],
+                           sigma, profit_if_above=False) +
+              _pop_from_d2(underlying, pu.strike - credit / CONTRACT_MULTIPLIER, T, p["r"],
+                           sigma, profit_if_above=True) - 1.0)
     return _finalize("short_straddle", chain, legs, credit, max_profit, max_loss, pop,
                      underlying, p,
                      rationale=(f"Sell {c.strike:.1f} straddle @ {exp} for {credit/100:.2f} "

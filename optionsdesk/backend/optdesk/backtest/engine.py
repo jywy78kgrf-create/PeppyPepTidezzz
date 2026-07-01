@@ -90,11 +90,19 @@ class Backtester:
         delisted_set = {t.upper() for t in self.store.delisted_tickers()}
         delisted_traded: set[str] = set()
         last_signal: dict[str, date] = {}
+        # Last-seen underlying per ticker, refreshed every day a chain prints.
+        # Used for intrinsic settlement (delist/expiry) and marking when a
+        # ticker has no chain on a given day — never the stale open-day price.
+        last_underlying: dict[str, float] = {}
 
         equity_curve: list[EquityPoint] = []
 
         for day in all_dates:
             chains = self._chains_on(tickers, day)
+            for tk, ch in chains.items():
+                u = _underlying(ch)
+                if u > 0:
+                    last_underlying[tk] = u
 
             # 1) Force-close anything whose ticker just went inactive (delist).
             for pos in list(pf.open_positions):
@@ -103,19 +111,23 @@ class Backtester:
                     chain = chains.get(tk, [])
                     pf.accrue_carry(pos, day)
                     pf.close(pos, chain, day, reason="delisted", at_intrinsic=True,
-                             underlying=pos.spec.meta.get("underlying"))
+                             underlying=last_underlying.get(
+                                 tk, pos.spec.meta.get("underlying")))
 
             # 2) Accrue carry and evaluate managed exits on survivors.
             for pos in list(pf.open_positions):
-                chain = chains.get(pos.spec.ticker, [])
+                tk = pos.spec.ticker
+                chain = chains.get(tk, [])
                 pf.accrue_carry(pos, day)
-                reason = self._exit_reason(pos, chain, day, cfg)
+                reason = self._exit_reason(pos, chain, day, cfg,
+                                           last_u=last_underlying.get(tk))
                 if reason is not None:
                     at_intrinsic = reason == "expiry"
-                    pf.close(pos, chain, day, reason=reason, at_intrinsic=at_intrinsic)
+                    pf.close(pos, chain, day, reason=reason, at_intrinsic=at_intrinsic,
+                             underlying=last_underlying.get(tk))
 
             # 3) Generate new signals (one per ticker per cooldown window).
-            cur_equity = pf.equity(chains, day)  # sizing basis for today
+            cur_equity = pf.equity(chains, day, underlyings=last_underlying)
             for tk in tickers:
                 if not pf.can_open():
                     break
@@ -146,7 +158,7 @@ class Backtester:
                         delisted_traded.add(tk.upper())
 
             # 4) Mark equity for the day.
-            eq = pf.equity(chains, day)
+            eq = pf.equity(chains, day, underlyings=last_underlying)
             equity_curve.append(EquityPoint(asof=day, equity=round(eq, 2),
                                             cash=round(pf.cash, 2),
                                             open_positions=len(pf.open_positions)))
@@ -156,9 +168,12 @@ class Backtester:
             last_day = all_dates[-1]
             chains = self._chains_on(tickers, last_day)
             for pos in list(pf.open_positions):
-                chain = chains.get(pos.spec.ticker, [])
+                tk = pos.spec.ticker
+                chain = chains.get(tk, [])
                 pf.accrue_carry(pos, last_day)
-                pf.close(pos, chain, last_day, reason="end", at_intrinsic=True)
+                pf.close(pos, chain, last_day, reason="end", at_intrinsic=True,
+                         underlying=last_underlying.get(
+                             tk, pos.spec.meta.get("underlying")))
             if equity_curve:
                 equity_curve[-1] = EquityPoint(
                     asof=last_day, equity=round(pf.cash, 2), cash=round(pf.cash, 2),
@@ -224,21 +239,28 @@ class Backtester:
         return spec
 
     def _exit_reason(self, pos: OpenPosition, chain: list[OptionQuote], day: date,
-                     cfg: dict) -> str | None:
+                     cfg: dict, last_u: float | None = None) -> str | None:
         """Decide whether/why to close a position today.
 
         Order of precedence: expiry -> close-DTE -> profit target -> stop.
+
+        Sign conventions (net liquidation mark of the legs, long +, short -):
+          * credit structure: entry mark < 0 (liability). Profit = mark RISES
+            toward 0, so the target triggers on ``value >= target_value``
+            (e.g. entry -100, 50% target -> close at value >= -50). Loss = mark
+            falls further below entry; stop triggers on ``value <= stop_value``.
+          * debit structure: entry mark > 0 (asset). Profit = mark rises
+            (``value >= target_value``); loss = mark falls (``value <= stop``).
         """
         near_dte = min((l.expiry - day).days for l in pos.spec.legs)
         if near_dte <= 0:
             return "expiry"
-        mark = pos.spec  # alias for readability below
-        value = _position_mark(pos, chain, day, self.r)
+        value = _position_mark(pos, chain, day, self.r, last_u)
         entry_credit = sum(_signed_open(pos))
         if near_dte <= cfg["close_dte"]:
             return "close_dte"
         if entry_credit > 0:  # credit structure: profit as buyback value shrinks
-            if value <= pos.target_value:
+            if value >= pos.target_value:
                 return "target"
             if value <= pos.stop_value:
                 return "stop"
@@ -281,10 +303,14 @@ def _signed_open(pos: OpenPosition) -> list[float]:
 
 
 def _position_mark(pos: OpenPosition, chain: list[OptionQuote], day: date,
-                   r: float) -> float:
-    """Signed liquidation mark (x100) of a position's legs today."""
+                   r: float, last_u: float | None = None) -> float:
+    """Signed liquidation mark (x100) of a position's legs today.
+
+    Underlying preference: today's chain, else the engine's last-seen price,
+    else (only as a last resort) the price recorded at open.
+    """
     from ..quant.pricing import mark_leg, CONTRACT_MULTIPLIER
-    u = _underlying(chain) or pos.spec.meta.get("underlying", 0.0)
+    u = _underlying(chain) or (last_u or 0.0) or pos.spec.meta.get("underlying", 0.0)
     return sum(mark_leg(l, chain, day, u, r) * CONTRACT_MULTIPLIER for l in pos.spec.legs)
 
 
@@ -334,9 +360,14 @@ def compute_metrics(equity_curve: list[EquityPoint], trades: list[Trade], *,
         rets.append((equities[i] - prev) / prev if prev else 0.0)
 
     n_days = len(equity_curve)
-    years = max((m.end - m.start).days / 365.25, 1e-9)
+    span_days = (m.end - m.start).days
     if start_eq > 0 and end_eq > 0:
-        m.cagr = (end_eq / start_eq) ** (1.0 / years) - 1.0
+        if span_days < 1:
+            # Sub-day span: annualising explodes/overflows; report the plain return.
+            m.cagr = m.total_return
+        else:
+            years = span_days / 365.25
+            m.cagr = (end_eq / start_eq) ** (1.0 / years) - 1.0
     else:
         m.cagr = 0.0
 

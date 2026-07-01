@@ -147,11 +147,19 @@ class Portfolio:
         # is a liability to buy back (negative mark); a debit is an asset.
         entry_mark = self._net_mark(spec, chain, asof)
         if signed_cash > 0:  # credit: profit as the buyback value shrinks toward 0
+            # entry_mark < 0; target sits between entry_mark and 0 and the
+            # engine triggers on value RISING through it (value >= target).
             target_value = entry_mark * (1.0 - profit_target)
             stop_value = entry_mark - stop_mult * capital_at_risk
         else:  # debit: profit as the asset value rises
             target_value = entry_mark + profit_target * capital_at_risk
-            stop_value = entry_mark * (1.0 - stop_mult) if entry_mark > 0 else -capital_at_risk
+            # Stop after losing stop_mult x capital-at-risk. A debit structure's
+            # mark cannot go below 0, so clamp: for stop_mult >= 1 the stop can
+            # only fire at total loss (value == 0); expiry/close_dte handle the rest.
+            if entry_mark > 0:
+                stop_value = max(entry_mark - stop_mult * capital_at_risk, 0.0)
+            else:
+                stop_value = -capital_at_risk
 
         pos = OpenPosition(
             spec=spec, opened=asof, open_fills=fills, entry_cash=entry_cash,
@@ -176,9 +184,16 @@ class Portfolio:
         return total
 
     def position_value(self, pos: OpenPosition, chain: list[OptionQuote],
-                       asof: date) -> float:
-        """Current liquidation value (signed mark) of an open position."""
-        return self._net_mark(pos.spec, chain, asof)
+                       asof: date, underlying: float | None = None) -> float:
+        """Current liquidation value (signed mark) of an open position.
+
+        ``underlying`` is a fallback spot (e.g. the engine's last-seen price)
+        for days when the chain snapshot is empty.
+        """
+        u = next((q.underlying for q in chain if q.underlying > 0), None)
+        if u is None and underlying is not None and underlying > 0:
+            u = underlying
+        return self._net_mark(pos.spec, chain, asof, underlying=u)
 
     def accrue_carry(self, pos: OpenPosition, asof: date) -> float:
         """Accrue one day of financing on capital-at-risk; returns the charge."""
@@ -256,12 +271,19 @@ class Portfolio:
         return trade
 
     # ------------------------------------------------------------------ #
-    def equity(self, chains: dict[str, list[OptionQuote]], asof: date) -> float:
-        """Total equity: cash plus liquidation value of all open positions."""
+    def equity(self, chains: dict[str, list[OptionQuote]], asof: date,
+               underlyings: dict[str, float] | None = None) -> float:
+        """Total equity: cash plus liquidation value of all open positions.
+
+        ``underlyings`` optionally maps ticker -> last-seen spot, used to mark
+        positions whose ticker printed no chain on ``asof``.
+        """
         eq = self.cash
         for pos in self.open_positions:
-            chain = chains.get(pos.spec.ticker, [])
-            eq += self.position_value(pos, chain, asof)
+            tk = pos.spec.ticker
+            chain = chains.get(tk, [])
+            u = underlyings.get(tk) if underlyings else None
+            eq += self.position_value(pos, chain, asof, underlying=u)
         return eq
 
 
