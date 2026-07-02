@@ -20,6 +20,12 @@ services:
       OPTDESK_LIVE: ${OPTDESK_LIVE:-0}
       IBKR_HOST: ${IBKR_HOST:-host.docker.internal}
       IBKR_PORT: ${IBKR_PORT:-7497}
+      # autopilot tuning (all optional; defaults are conservative)
+      AUTO_RESEARCH_HR: ${AUTO_RESEARCH_HR:-6}
+      AUTO_TRADE_MIN: ${AUTO_TRADE_MIN:-5}
+      AUTO_DAY_LOSS_FRAC: ${AUTO_DAY_LOSS_FRAC:-0.03}
+      AUTO_MIN_HOLDOUT: ${AUTO_MIN_HOLDOUT:-0.30}
+      AUTO_MAX_OPEN: ${AUTO_MAX_OPEN:-5}
     volumes:
       - ./data:/app/data        # your option chains + universe (bind mount)
       - paperstate:/app/.state  # persisted paper-trading book

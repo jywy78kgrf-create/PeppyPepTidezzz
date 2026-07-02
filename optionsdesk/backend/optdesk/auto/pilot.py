@@ -78,6 +78,29 @@ class AutoConfig:
     demote_after_losses: int = 3         # consecutive losing closes -> demote
 
 
+def _env_config() -> AutoConfig:
+    """Default AutoConfig with .env overrides for the knobs people actually
+    tune, so cadence/limits changes don't require a code edit + rebuild."""
+    import os
+    cfg = AutoConfig()
+
+    def _num(name: str, current, cast):
+        raw = os.getenv(name)
+        if raw:
+            try:
+                return cast(raw)
+            except ValueError:
+                pass
+        return current
+
+    cfg.research_interval_hr = _num("AUTO_RESEARCH_HR", cfg.research_interval_hr, float)
+    cfg.trade_interval_min = _num("AUTO_TRADE_MIN", cfg.trade_interval_min, int)
+    cfg.daily_loss_limit_frac = _num("AUTO_DAY_LOSS_FRAC", cfg.daily_loss_limit_frac, float)
+    cfg.min_holdout_score = _num("AUTO_MIN_HOLDOUT", cfg.min_holdout_score, float)
+    cfg.max_open_positions = _num("AUTO_MAX_OPEN", cfg.max_open_positions, int)
+    return cfg
+
+
 # --------------------------------------------------------------------------- #
 # AutoPilot
 # --------------------------------------------------------------------------- #
@@ -97,7 +120,7 @@ class AutoPilot:
         now_fn: Callable[[], datetime] = datetime.utcnow,
     ) -> None:
         self.settings = settings
-        self.cfg = config or AutoConfig()
+        self.cfg = config or _env_config()
         self.now_fn = now_fn
         # _lock guards STATE mutations only and is never held across a long
         # operation (a research batch runs for minutes) — the kill switch must
