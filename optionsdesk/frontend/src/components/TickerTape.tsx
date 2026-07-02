@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
-import * as mock from '../mock'
+import { getTape } from '../api'
 import type { Quote } from '../types'
 import { num } from '../lib/format'
+
+const REFRESH_MS = 60_000 // one bulk quote call per minute — rate-limit friendly
 
 function Item({ q }: { q: Quote }) {
   const up = q.change >= 0
@@ -23,15 +25,40 @@ function Item({ q }: { q: Quote }) {
   )
 }
 
-export default function TickerTape() {
-  const [tape, setTape] = useState<Quote[]>(() => mock.mockTape())
+type Source = 'live' | 'eod' | 'sim'
 
+const SOURCE_LABEL: Record<Source, string> = {
+  live: 'Live Tape',
+  eod: 'EOD Tape',
+  sim: 'Sim Tape',
+}
+const SOURCE_COLOR: Record<Source, string> = {
+  live: 'var(--color-teal)',
+  eod: 'var(--color-ink-faint)',
+  sim: 'var(--color-amber)',
+}
+
+export default function TickerTape() {
+  const [tape, setTape] = useState<Quote[]>([])
+  const [source, setSource] = useState<Source>('eod')
+
+  // Real quotes only: one backend call per minute (which is itself a single
+  // Alpha Vantage bulk request when live). No client-side fake jitter — the
+  // label always states exactly where the prices came from.
   useEffect(() => {
-    const id = setInterval(() => setTape(mock.mockTape()), 4000)
+    const refresh = () =>
+      getTape().then((r) => {
+        setTape(r.quotes)
+        setSource(r.simulated ? 'sim' : r.live ? 'live' : 'eod')
+      })
+    refresh()
+    const id = setInterval(refresh, REFRESH_MS)
     return () => clearInterval(id)
   }, [])
 
+  if (tape.length === 0) return null
   const doubled = [...tape, ...tape]
+  const color = SOURCE_COLOR[source]
 
   return (
     <div
@@ -40,10 +67,12 @@ export default function TickerTape() {
     >
       <div className="absolute left-0 top-0 z-10 flex h-full items-center gap-2 bg-[var(--color-panel)]/80 px-3.5 backdrop-blur-sm">
         <span
-          className="pulse-dot"
-          style={{ width: 6, height: 6, borderRadius: 99, background: 'var(--color-teal)', boxShadow: '0 0 8px var(--color-teal)' }}
+          className={source === 'live' ? 'pulse-dot' : ''}
+          style={{ width: 6, height: 6, borderRadius: 99, background: color, boxShadow: source === 'live' ? `0 0 8px ${color}` : 'none' }}
         />
-        <span className="panel-title">Live Tape</span>
+        <span className="panel-title" style={source === 'sim' ? { color } : undefined}>
+          {SOURCE_LABEL[source]}
+        </span>
       </div>
       {/* edge fades */}
       <div

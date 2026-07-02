@@ -598,6 +598,50 @@ def live_quote(ticker: str) -> dict:
     return AlphaVantage().quote(ticker)
 
 
+@app.get("/api/live/tape")
+def live_tape(symbols: str | None = Query(None, description="CSV; defaults to first 15 universe tickers")) -> dict:
+    """Ticker-tape quotes: ONE Alpha Vantage bulk call when live, otherwise the
+    last two EOD closes from the equity store (flagged live: false). Never
+    returns fabricated prices."""
+    import datetime as _dtm
+
+    from ..data.loader import EquityStore
+    from ..live.alpha_vantage import bulk_quotes
+
+    if symbols:
+        syms = [s.strip().upper() for s in symbols.split(",") if s.strip()][:30]
+    else:
+        syms = store().tickers()[:15]
+    if not syms:
+        return {"quotes": [], "live": False, "asof": _dtm.datetime.utcnow().isoformat()}
+
+    av = _alpha_vantage()
+    if av.configured:
+        res = bulk_quotes(av, syms)
+        if res.get("quotes"):
+            return {"quotes": res["quotes"], "live": True,
+                    "asof": _dtm.datetime.utcnow().isoformat()}
+
+    # EOD fallback: last two closes from the equity store
+    es = EquityStore()
+    quotes = []
+    for tk in syms:
+        try:
+            s = es.close_series(tk)
+        except FileNotFoundError:
+            continue
+        if len(s) < 2:
+            continue
+        price, prev = float(s.iloc[-1]), float(s.iloc[-2])
+        quotes.append({
+            "ticker": tk, "price": round(price, 2),
+            "change": round(price - prev, 2),
+            "change_pct": round((price - prev) / prev * 100.0, 2) if prev else 0.0,
+        })
+    return {"quotes": quotes, "live": False,
+            "asof": _dtm.datetime.utcnow().isoformat()}
+
+
 @app.get("/api/brokers/status")
 def brokers_status() -> dict:
     from ..brokers.ibkr import IBKRBroker

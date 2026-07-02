@@ -237,6 +237,27 @@ export function getAutoActivity(limit = 30): Promise<{ events: AutoActivityEvent
 
 /* ------------------------------ live ---------------------------------- */
 
+export interface TapeResponse {
+  quotes: Quote[]
+  live: boolean
+  asof: string
+  simulated?: boolean
+}
+
+/** GET /api/live/tape — one bulk AV call when live, EOD closes otherwise. */
+export function getTape(): Promise<TapeResponse> {
+  return withFallback(
+    () => request<TapeResponse>('/api/live/tape', undefined, 15000),
+    () => ({
+      quotes: mock.mockTape(),
+      live: false,
+      asof: new Date().toISOString(),
+      simulated: true,
+    }),
+  )
+}
+
+
 export function getQuote(ticker: string): Promise<Quote> {
   return withFallback(
     () => request<Quote>(`/api/live/quote?ticker=${encodeURIComponent(ticker)}`),

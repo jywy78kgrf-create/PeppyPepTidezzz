@@ -230,3 +230,37 @@ def fetch_earnings_calendar(av: "AlphaVantage",
     if text.lstrip().startswith("{"):  # JSON body = throttle/limit note
         return {"error": text[:200]}
     return {"earnings": _parse_earnings_csv(text)}
+
+
+def bulk_quotes(av: "AlphaVantage", symbols: list[str]) -> dict[str, Any]:
+    """Realtime quotes for up to ~100 symbols in ONE call (premium
+    REALTIME_BULK_QUOTES) — the rate-limit-friendly way to feed a ticker tape.
+
+    Returns {"quotes": [{ticker, price, change, change_pct}]} or {"error": ...}.
+    """
+    if not symbols:
+        return {"quotes": []}
+    data = av._get({"function": "REALTIME_BULK_QUOTES",
+                    "symbol": ",".join(s.upper() for s in symbols[:100])})
+    if "error" in data:
+        return data
+    rows = data.get("data")
+    if not isinstance(rows, list):
+        return {"error": "unexpected REALTIME_BULK_QUOTES payload"}
+    quotes = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        sym = str(r.get("symbol") or "").upper()
+        price = _to_float(r.get("close") or r.get("price"))
+        if not sym or price <= 0:
+            continue
+        change = _to_float(r.get("change"))
+        pct_raw = str(r.get("change_percent") or "").rstrip("%")
+        pct = _to_float(pct_raw)
+        prev = _to_float(r.get("previous_close"))
+        if pct == 0.0 and prev > 0:
+            pct = (price - prev) / prev * 100.0
+        quotes.append({"ticker": sym, "price": round(price, 2),
+                       "change": round(change, 2), "change_pct": round(pct, 2)})
+    return {"quotes": quotes}
