@@ -135,6 +135,7 @@ export default function LearningPanel() {
   const [holdout, setHoldout] = useState<HoldoutInfo | null>(null)
   const [regimes, setRegimes] = useState<Regimes | null>(null)
   const [flash, setFlash] = useState(false)
+  const [simulated, setSimulated] = useState(false)
   const histRef = useRef<LearnIteration[]>([])
 
   // run controls — every number on this panel comes from a real learn run
@@ -172,6 +173,7 @@ export default function LearningPanel() {
         setBest({ score: run, params: r.best_params ?? {}, iter: bestIter })
         setHoldout(r.holdout ?? null)
         setRegimes(r.regimes ?? null)
+        setSimulated(Boolean(r.simulated))
         setFlash(true)
         setTimeout(() => setFlash(false), 700)
       })
@@ -202,6 +204,18 @@ export default function LearningPanel() {
             style={{ width: 7, height: 7, borderRadius: 99, background: 'var(--color-iris)', boxShadow: '0 0 9px var(--color-iris)' }}
           />
           <h2 className="panel-title">Learning Loop</h2>
+          {simulated && (
+            <span
+              className="pill"
+              style={{
+                borderColor: 'color-mix(in srgb, var(--color-amber) 55%, transparent)',
+                color: 'var(--color-amber)',
+              }}
+              title="The backend run failed or timed out — these numbers are demo data, not a real optimization."
+            >
+              ⚠ SIMULATED
+            </span>
+          )}
           <span className="num text-[10px] text-[var(--color-ink-faint)]">
             iter {history.length ? history[history.length - 1].iteration : 0}
           </span>

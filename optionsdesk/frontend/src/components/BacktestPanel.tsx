@@ -136,6 +136,7 @@ const inputCls =
 export default function BacktestPanel({ className }: { className?: string }) {
   const [bt, setBt] = useState<BacktestResponse | null>(null)
   const [running, setRunning] = useState(false)
+  const simulated = Boolean(bt?.simulated)
 
   // run-config strip state
   const [strategy, setStrategy] = useState<string>('bull_put_spread')
@@ -179,15 +180,29 @@ export default function BacktestPanel({ className }: { className?: string }) {
       subtitle={bt ? `${bt.config} · ${bt.n_trades} trades · ${bt.start ?? '—'} → ${bt.end ?? '—'}` : undefined}
       right={
         bt && (
-          <span
-            className="pill"
-            style={{
-              borderColor: 'color-mix(in srgb, var(--color-teal) 35%, transparent)',
-              color: 'var(--color-teal)',
-            }}
-            title={bt.survivorship_note}
-          >
-            ✓ Survivorship-clean
+          <span className="flex items-center gap-1.5">
+            {simulated && (
+              <span
+                className="pill"
+                style={{
+                  borderColor: 'color-mix(in srgb, var(--color-amber) 55%, transparent)',
+                  color: 'var(--color-amber)',
+                }}
+                title="The backend run failed or timed out — these numbers are demo data, not a real backtest."
+              >
+                ⚠ SIMULATED
+              </span>
+            )}
+            <span
+              className="pill"
+              style={{
+                borderColor: 'color-mix(in srgb, var(--color-teal) 35%, transparent)',
+                color: 'var(--color-teal)',
+              }}
+              title={bt.survivorship_note}
+            >
+              ✓ Survivorship-clean
+            </span>
           </span>
         )
       }

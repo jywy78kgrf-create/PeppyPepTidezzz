@@ -42,6 +42,10 @@ function setSource(live: boolean) {
 // backtest, learn) needs much longer or it aborts to mock on real data.
 const TIMEOUT_FAST = 3000
 const TIMEOUT_HEAVY = 90000
+// real-data compute: a full backtest can run minutes, a learn run longer.
+// A short timeout here silently degrades to mock data — never do that.
+const TIMEOUT_BACKTEST = 300000
+const TIMEOUT_LEARN = 600000
 
 async function request<T>(path: string, init?: RequestInit, timeoutMs = TIMEOUT_FAST): Promise<T> {
   const ctrl = new AbortController()
@@ -115,7 +119,7 @@ export interface BacktestRequest {
 
 export function postBacktest(body: BacktestRequest): Promise<BacktestResponse> {
   return withFallback(
-    () => request<BacktestResponse>('/api/backtest', { method: 'POST', body: JSON.stringify(body) }, TIMEOUT_HEAVY),
+    () => request<BacktestResponse>('/api/backtest', { method: 'POST', body: JSON.stringify(body) }, TIMEOUT_BACKTEST),
     () => mock.mockBacktest(body),
   )
 }
@@ -131,7 +135,7 @@ export interface LearnRequest {
 
 export function postLearn(body: LearnRequest): Promise<LearnResponse> {
   return withFallback(
-    () => request<LearnResponse>('/api/learn', { method: 'POST', body: JSON.stringify(body) }, TIMEOUT_HEAVY),
+    () => request<LearnResponse>('/api/learn', { method: 'POST', body: JSON.stringify(body) }, TIMEOUT_LEARN),
     () => mock.mockLearnHistory(body.n_iter),
   )
 }

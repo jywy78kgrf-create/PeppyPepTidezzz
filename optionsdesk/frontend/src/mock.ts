@@ -154,6 +154,8 @@ const SHORT_PREMIUM = new Set([
 ])
 
 export function mockBacktest(req: MockBacktestRequest = {}): BacktestResponse {
+  // NOTE: every mock result is branded simulated: true so the UI can never
+  // present fabricated numbers as a real run.
   const strategy = req.strategy ?? 'bull_put_spread'
   const tickers = req.tickers?.length ? req.tickers : ['SPY', 'QQQ', 'NVDA', 'AAPL']
   const start = req.start ?? '2023-01-03'
@@ -245,6 +247,7 @@ export function mockBacktest(req: MockBacktestRequest = {}): BacktestResponse {
     closed_reasons,
     equity_curve: curve,
     trades,
+    simulated: true,
   }
 }
 
@@ -312,6 +315,7 @@ export function mockLearnHistory(nIter = 64): LearnResponse {
     history,
     holdout,
     regimes,
+    simulated: true,
   }
 }
 

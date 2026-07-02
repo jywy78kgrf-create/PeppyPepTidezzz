@@ -88,6 +88,8 @@ export interface BacktestResponse {
   closed_reasons: ClosedReasons
   equity_curve: EquityPoint[]
   trades: TradeSummary[]
+  /** true ONLY on mock-layer results — real backend runs never set this. */
+  simulated?: boolean
 }
 
 /* --------------------------------------------------------------------- */
@@ -138,6 +140,9 @@ export interface LearnResponse {
   history: LearnIteration[]
   holdout: HoldoutInfo | null
   regimes: Regimes | null
+  trials?: number
+  /** true ONLY on mock-layer results — real backend runs never set this. */
+  simulated?: boolean
 }
 
 /* --------------------------------------------------------------------- */
