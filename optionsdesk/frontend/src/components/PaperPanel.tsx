@@ -29,6 +29,7 @@ import type {
   PaperPosition,
 } from '../types'
 import Panel from './Panel'
+import ResearchEngine from './ResearchEngine'
 import { usd } from '../lib/format'
 
 const REFRESH_MS = 30_000
@@ -219,6 +220,9 @@ function AutoPilotConsole() {
           {status.breaker.reason} — re-engage to resume.
         </div>
       )}
+
+      {/* live window into the number-crunching */}
+      <ResearchEngine />
 
       {/* promoted configs the loop is trading */}
       {activeConfigs.length > 0 && (

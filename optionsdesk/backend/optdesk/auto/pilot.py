@@ -136,6 +136,10 @@ class AutoPilot:
         self._state = self._load()
         # earnings calendar cache: (fetch_date, {SYMBOL: [iso dates]} | None)
         self._earnings_cache: tuple[Optional[date], Optional[dict]] = (None, None)
+        # live research telemetry — ephemeral (never persisted), read by the
+        # UI's engine view. Guarded by _lock; writes are all short.
+        self._research_live: dict = {"active": False}
+        self._research_last: Optional[dict] = None
 
     # ------------------------------------------------------------------ #
     # Lazy default dependencies (kept out of __init__ so tests never touch them)
@@ -154,14 +158,71 @@ class AutoPilot:
             self._store = ChainStore()
         return self._store
 
-    def _learn(self, strategy: str, tickers: list[str], start: date, end: date) -> dict:
+    def _learn(self, strategy: str, tickers: list[str], start: date, end: date,
+               on_iter: Optional[Callable] = None) -> dict:
         if self._learn_fn is not None:
+            # injected stubs (tests) keep the plain 4-arg signature
             return self._learn_fn(strategy, tickers, start, end)
         from ..learn.loop import LearningLoop
         return LearningLoop(self.store, self.settings).run(
             strategy, tickers, start, end,
             n_iter=self.cfg.learn_iters, objective="sortino", seed=11,
+            on_iter=on_iter,
         )
+
+    def _on_research_iter(self, it) -> None:
+        """LearningLoop callback: append one iteration to live telemetry."""
+        metrics = getattr(it, "metrics", None) or {}
+        rec = {
+            "iteration": getattr(it, "iteration", None),
+            "oos_score": getattr(it, "oos_score", None),
+            "is_score": getattr(it, "is_score", None),
+            "accepted": bool(getattr(it, "accepted", False)),
+            "n_trades": metrics.get("n_trades"),
+            "at": self.now_fn().isoformat(),
+        }
+        with self._lock:
+            if self._research_live.get("active"):
+                self._research_live.setdefault("iterations", []).append(rec)
+
+    def research_status(self) -> dict:
+        """Snapshot of what the research engine is doing right now — the
+        UI's window into the number-crunching. Cheap; lock held briefly."""
+        import math
+
+        from ..strategies.library import STRATEGIES
+
+        try:
+            n_universe = len(self.store.tickers())
+        except Exception:  # noqa: BLE001 - telemetry must never raise
+            n_universe = 0
+        per = max(1, self.cfg.research_batch_tickers)
+        sweep_total = (len(STRATEGIES) * math.ceil(n_universe / per)
+                       if n_universe else 0)
+        now = self.now_fn()
+        with self._lock:
+            cur = dict(self._research_live)
+            cur["iterations"] = [dict(r) for r in cur.get("iterations", [])]
+            last = dict(self._research_last) if self._research_last else None
+            cursor = int(self._state["research_cursor"])
+            enabled = bool(self._state["enabled"])
+        if cur.get("active") and cur.get("started_at"):
+            try:
+                started = datetime.fromisoformat(cur["started_at"])
+                cur["elapsed_s"] = round((now - started).total_seconds(), 1)
+            except ValueError:
+                cur["elapsed_s"] = None
+        cur["trades_simulated"] = int(
+            sum(r.get("n_trades") or 0 for r in cur["iterations"]))
+        return {
+            "enabled": enabled,
+            "current": cur,
+            "last": last,
+            "batches_done": cursor,
+            "sweep_total": sweep_total,
+            "sweep_done": (cursor % sweep_total) if sweep_total else 0,
+            "sweep_number": (cursor // sweep_total + 1) if sweep_total else 0,
+        }
 
     # ------------------------------------------------------------------ #
     # State
@@ -332,10 +393,46 @@ class AutoPilot:
             start = max(all_dates[0], end - timedelta(days=self.cfg.lookback_days))
             self._log("research", f"learning {strategy} on {','.join(batch)} "
                                   f"({start} -> {end})")
+            started = self.now_fn()
+            # arm live telemetry for the engine view
+            self._research_live = {
+                "active": True,
+                "strategy": strategy,
+                "tickers": batch,
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "started_at": started.isoformat(),
+                "n_iter": int(self.cfg.learn_iters),
+                "iterations": [],
+            }
             self._save()
 
         # the long part runs WITHOUT the state lock: kill switch stays live
-        result = self._learn(strategy, batch, start, end)
+        result: Optional[dict] = None
+        try:
+            result = self._learn(strategy, batch, start, end,
+                                 on_iter=self._on_research_iter)
+        finally:
+            finished = self.now_fn()
+            with self._lock:
+                iters = list(self._research_live.get("iterations") or [])
+                self._research_last = {
+                    "strategy": strategy,
+                    "tickers": batch,
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "holdout_score": ((result or {}).get("holdout")
+                                      or {}).get("score"),
+                    "trials": (result or {}).get("trials"),
+                    "iterations": len(iters),
+                    "trades_simulated": int(
+                        sum(r.get("n_trades") or 0 for r in iters)),
+                    "duration_s": round(
+                        (finished - started).total_seconds(), 1),
+                    "finished_at": finished.isoformat(),
+                    "verdict": None,
+                }
+                self._research_live = {"active": False}
 
         holdout = (result or {}).get("holdout") or {}
         score = holdout.get("score")
@@ -356,6 +453,9 @@ class AutoPilot:
             reasons.append(f"maxdd={h_dd}")
         if reasons:
             with self._lock:
+                if self._research_last:
+                    self._research_last["verdict"] = (
+                        "rejected: " + ", ".join(reasons))
                 self._log("research", f"{strategy}: NOT promoted "
                                       f"({', '.join(reasons)})")
                 self._save()
@@ -381,6 +481,8 @@ class AutoPilot:
             promoted.append(entry)
             promoted.sort(key=lambda p: p["holdout_score"], reverse=True)
             self._state["promoted"] = promoted[: self.cfg.max_promoted]
+            if self._research_last:
+                self._research_last["verdict"] = "promoted"
             self._log("promote", f"{strategy} holdout={entry['holdout_score']} "
                                  f"ret={entry['holdout_return']} on {','.join(batch)}")
             try:

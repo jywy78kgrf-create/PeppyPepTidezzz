@@ -312,3 +312,54 @@ def test_vrp_gate_blocks_short_premium_when_negative(tmp_path):
         assert pilot._vrp_ok([], "AAA", date(2026, 6, 1), "short_straddle") is True
     finally:
         sig.vrp = orig
+
+
+# --------------------------------------------------------------------------- #
+# Research telemetry (the UI's engine view)
+# --------------------------------------------------------------------------- #
+def test_research_status_idle_shape(tmp_path):
+    pilot = make_pilot(tmp_path, FakeBroker())
+    st = pilot.research_status()
+    assert st["current"]["active"] is False
+    assert st["last"] is None
+    assert st["batches_done"] == 0
+    # 9 strategies x ceil(2 tickers / 6 per batch) = 9 batches per sweep
+    assert st["sweep_total"] > 0
+
+
+def test_research_batch_finalizes_telemetry(tmp_path):
+    pilot = make_pilot(tmp_path, FakeBroker(), learn=good_learn)
+    pilot._state["enabled"] = True
+    pilot.run_research_batch()
+    st = pilot.research_status()
+    assert st["current"]["active"] is False       # never left armed
+    last = st["last"]
+    assert last is not None
+    assert last["strategy"] and last["tickers"]
+    assert last["verdict"] == "promoted"          # good_learn clears the bar
+    assert st["batches_done"] == 1
+
+
+def test_research_verdict_rejected(tmp_path):
+    pilot = make_pilot(tmp_path, FakeBroker(), learn=bad_learn)
+    pilot._state["enabled"] = True
+    pilot.run_research_batch()
+    last = pilot.research_status()["last"]
+    assert last["verdict"] is not None and last["verdict"].startswith("rejected")
+
+
+def test_on_research_iter_appends_only_while_active(tmp_path):
+    pilot = make_pilot(tmp_path, FakeBroker())
+
+    class It:
+        iteration, oos_score, is_score, accepted = 1, 0.5, 0.6, True
+        metrics = {"n_trades": 7}
+
+    pilot._on_research_iter(It())                 # engine idle -> ignored
+    assert pilot.research_status()["current"].get("iterations") == []
+    pilot._research_live = {"active": True, "iterations": []}
+    pilot._on_research_iter(It())
+    cur = pilot.research_status()["current"]
+    assert len(cur["iterations"]) == 1
+    assert cur["iterations"][0]["n_trades"] == 7
+    assert cur["trades_simulated"] == 7

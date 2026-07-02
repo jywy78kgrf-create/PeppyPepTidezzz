@@ -19,6 +19,7 @@ import type {
   PaperHistoryResponse,
   Quote,
   Regimes,
+  ResearchStatus,
   SuggestionsResponse,
 } from './types'
 
@@ -323,6 +324,23 @@ export function getAutoActivity(limit = 30): Promise<{ events: AutoActivityEvent
   return withFallback(
     () => request<{ events: AutoActivityEvent[] }>(`/api/auto/activity?limit=${limit}`),
     () => ({ events: mock.mockAutoActivity() }),
+  )
+}
+
+/** GET /api/auto/research — live engine telemetry. The offline fallback is an
+ *  honest "idle" (never a fake crunching animation). */
+export function getResearchStatus(): Promise<ResearchStatus> {
+  return withFallback(
+    () => request<ResearchStatus>('/api/auto/research'),
+    () => ({
+      enabled: false,
+      current: { active: false },
+      last: null,
+      batches_done: 0,
+      sweep_total: 0,
+      sweep_done: 0,
+      sweep_number: 0,
+    }),
   )
 }
 

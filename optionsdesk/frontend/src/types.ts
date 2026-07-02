@@ -241,6 +241,53 @@ export interface AutoActivityEvent {
   detail: string
 }
 
+/* ---- research engine telemetry (GET /api/auto/research) --------------- */
+export interface ResearchIteration {
+  iteration: number | null
+  oos_score: number | null
+  is_score?: number | null
+  accepted: boolean
+  n_trades?: number | null
+  at?: string
+}
+
+export interface ResearchCurrent {
+  active: boolean
+  strategy?: string
+  tickers?: string[]
+  start?: string
+  end?: string
+  started_at?: string
+  elapsed_s?: number | null
+  n_iter?: number
+  iterations?: ResearchIteration[]
+  trades_simulated?: number
+}
+
+export interface ResearchLast {
+  strategy: string
+  tickers: string[]
+  start?: string
+  end?: string
+  holdout_score: number | null
+  trials?: number | null
+  iterations: number
+  trades_simulated: number
+  duration_s: number
+  finished_at: string
+  verdict: string | null
+}
+
+export interface ResearchStatus {
+  enabled: boolean
+  current: ResearchCurrent
+  last: ResearchLast | null
+  batches_done: number
+  sweep_total: number
+  sweep_done: number
+  sweep_number: number
+}
+
 /* --------------------------------------------------------------------- */
 /*  Misc                                                                  */
 /* --------------------------------------------------------------------- */

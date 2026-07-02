@@ -588,6 +588,15 @@ def auto_activity(limit: int = Query(50, ge=1, le=200)) -> dict:
     return {"events": serialize(get_pilot().activity(limit))}
 
 
+@app.get("/api/auto/research")
+def auto_research() -> dict:
+    """Live telemetry of the research engine: the batch being crunched right
+    now (per-iteration scores as they land), the last finished batch, and
+    sweep progress across the whole strategy x universe rotation."""
+    from ..auto import get_pilot
+    return serialize(get_pilot().research_status())
+
+
 # --------------------------------------------------------------------------- #
 # Live data & broker status
 # --------------------------------------------------------------------------- #
