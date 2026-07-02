@@ -1,6 +1,8 @@
 // Data layer. Talks to the ATLAS backend at VITE_API_URL (default :8000).
-// Every call gracefully falls back to rich MOCK data when the backend is
-// unreachable, so `npm run dev` is fully demoable standalone.
+// Polling/status calls gracefully fall back to MOCK data when the backend is
+// unreachable, so `npm run dev` is demoable standalone. User-initiated
+// compute (backtest, learn) is STRICT: real result or a visible error —
+// never mock numbers wearing a real run's clothes.
 
 import * as mock from './mock'
 import type {
@@ -9,11 +11,14 @@ import type {
   BacktestResponse,
   BrokerStatus,
   HealthResponse,
+  HoldoutInfo,
+  LearnIteration,
   LearnResponse,
   PaperBookResponse,
   PaperGreeksResponse,
   PaperHistoryResponse,
   Quote,
+  Regimes,
   SuggestionsResponse,
 } from './types'
 
@@ -42,10 +47,9 @@ function setSource(live: boolean) {
 // backtest, learn) needs much longer or it aborts to mock on real data.
 const TIMEOUT_FAST = 3000
 const TIMEOUT_HEAVY = 90000
-// real-data compute: a full backtest can run minutes, a learn run longer.
-// A short timeout here silently degrades to mock data — never do that.
-const TIMEOUT_BACKTEST = 300000
-const TIMEOUT_LEARN = 600000
+// Ceiling for user-initiated compute (backtest). Matches nginx's
+// proxy_read_timeout — a run that hasn't answered in an hour is dead.
+const TIMEOUT_COMPUTE = 3_600_000
 
 async function request<T>(path: string, init?: RequestInit, timeoutMs = TIMEOUT_FAST): Promise<T> {
   const ctrl = new AbortController()
@@ -56,13 +60,30 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs = TIMEOUT_
       signal: ctrl.signal,
       headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
     })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) {
+      let detail = ''
+      try {
+        detail = (await res.text()).slice(0, 200)
+      } catch {
+        /* body unreadable — status alone will have to do */
+      }
+      throw new Error(`HTTP ${res.status}${detail ? ` — ${detail}` : ''}`)
+    }
     const data = (await res.json()) as T
     setSource(true)
     return data
   } finally {
     clearTimeout(timer)
   }
+}
+
+/** Human-readable reason for a failed strict (no-mock-fallback) call. */
+export function describeRunError(e: unknown): string {
+  if (e instanceof DOMException && e.name === 'AbortError') {
+    return 'timed out after 60 min — the backend is likely saturated (a research batch may be running); retry with fewer tickers or a shorter range'
+  }
+  if (e instanceof TypeError) return 'could not reach the backend — is the stack running?'
+  return e instanceof Error ? e.message : String(e)
 }
 
 // Wrap a live request with its mock fallback.
@@ -117,10 +138,13 @@ export interface BacktestRequest {
   risk?: Record<string, unknown> // RiskConfig fields, e.g. { method: 'kelly' }
 }
 
+// STRICT: a user-initiated backtest must never silently degrade to mock —
+// it either returns the real result or throws (the panel shows the error).
 export function postBacktest(body: BacktestRequest): Promise<BacktestResponse> {
-  return withFallback(
-    () => request<BacktestResponse>('/api/backtest', { method: 'POST', body: JSON.stringify(body) }, TIMEOUT_BACKTEST),
-    () => mock.mockBacktest(body),
+  return request<BacktestResponse>(
+    '/api/backtest',
+    { method: 'POST', body: JSON.stringify(body) },
+    TIMEOUT_COMPUTE,
   )
 }
 
@@ -133,11 +157,78 @@ export interface LearnRequest {
   objective?: string
 }
 
+// STRICT for the same reason as postBacktest. Prefer streamLearn() in UI —
+// it shows live per-iteration progress instead of a long silent wait.
 export function postLearn(body: LearnRequest): Promise<LearnResponse> {
-  return withFallback(
-    () => request<LearnResponse>('/api/learn', { method: 'POST', body: JSON.stringify(body) }, TIMEOUT_LEARN),
-    () => mock.mockLearnHistory(body.n_iter),
+  return request<LearnResponse>(
+    '/api/learn',
+    { method: 'POST', body: JSON.stringify(body) },
+    TIMEOUT_COMPUTE,
   )
+}
+
+export interface LearnDone {
+  best: Record<string, unknown> | null // best-params OOS backtest summary
+  best_params: Record<string, number>
+  holdout: HoldoutInfo | null
+  regimes: Regimes | null
+}
+
+export interface LearnStreamHandlers {
+  onIter: (it: LearnIteration) => void
+  onDone: (r: LearnDone) => void
+  onError: (msg: string) => void
+}
+
+/**
+ * GET /api/learn/stream — server-sent events, one per learning iteration as
+ * it completes, so a multi-minute real-data run shows live progress instead
+ * of a frozen button. Never falls back to mock. Returns a cancel function.
+ */
+export function streamLearn(req: LearnRequest, h: LearnStreamHandlers): () => void {
+  const qs = new URLSearchParams({
+    strategy: req.strategy,
+    tickers: req.tickers.join(','),
+    start: req.start,
+    end: req.end,
+    n_iter: String(req.n_iter),
+  })
+  if (req.objective) qs.set('objective', req.objective)
+  const es = new EventSource(`${BASE}/api/learn/stream?${qs.toString()}`)
+  let finished = false
+  const finish = () => {
+    finished = true
+    es.close()
+  }
+  es.onmessage = (ev) => {
+    let data: LearnIteration & { error?: string }
+    try {
+      data = JSON.parse(ev.data)
+    } catch {
+      return
+    }
+    if (data.error) {
+      finish()
+      h.onError(String(data.error))
+      return
+    }
+    setSource(true)
+    h.onIter(data)
+  }
+  es.addEventListener('done', (ev) => {
+    finish()
+    try {
+      h.onDone(JSON.parse((ev as MessageEvent).data) as LearnDone)
+    } catch {
+      h.onError('run finished but the final result could not be parsed')
+    }
+  })
+  es.onerror = () => {
+    if (finished) return
+    finish()
+    h.onError('connection to the backend lost — the run may still be going; check the autopilot feed or retry')
+  }
+  return finish
 }
 
 /* ------------------------------ paper --------------------------------- */

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   CartesianGrid,
@@ -12,7 +12,7 @@ import {
   YAxis,
   ZAxis,
 } from 'recharts'
-import { postLearn } from '../api'
+import { streamLearn } from '../api'
 import type { HoldoutInfo, LearnIteration, Regimes } from '../types'
 import { STRATEGY_NAMES } from '../types'
 import { num, pct } from '../lib/format'
@@ -135,60 +135,110 @@ export default function LearningPanel() {
   const [holdout, setHoldout] = useState<HoldoutInfo | null>(null)
   const [regimes, setRegimes] = useState<Regimes | null>(null)
   const [flash, setFlash] = useState(false)
-  const [simulated, setSimulated] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [elapsed, setElapsed] = useState(0)
   const histRef = useRef<LearnIteration[]>([])
+  const cancelRef = useRef<(() => void) | null>(null)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // run controls — every number on this panel comes from a real learn run
-  // (backend or the mock layer when offline); nothing is synthesized on a
-  // timer, so what you see is what the optimizer actually did.
+  // run controls — every number on this panel is streamed live from a real
+  // learn run on the backend; nothing is synthesized, and a failed run shows
+  // an error instead of demo data.
   const [strategy, setStrategy] = useState('bull_put_spread')
   const [tickersInput, setTickersInput] = useState('SPY,QQQ,NVDA')
   const [nIter, setNIter] = useState(12)
   const [running, setRunning] = useState(false)
 
+  const stopClock = () => {
+    if (timerRef.current) clearInterval(timerRef.current)
+    timerRef.current = null
+  }
+
+  // cancel the stream + clock if the panel unmounts mid-run
+  useEffect(() => () => {
+    cancelRef.current?.()
+    stopClock()
+  }, [])
+
   const runLearn = () => {
     if (running) return
     setRunning(true)
-    postLearn({
-      strategy,
-      tickers: tickersInput.split(',').map((t) => t.trim().toUpperCase()).filter(Boolean),
-      start: '2023-01-03',
-      end: '2025-01-03',
-      n_iter: nIter,
-    })
-      .then((r) => {
-        const hist = r.history ?? []
-        histRef.current = hist
-        setHistory(hist)
-        let run = 0
-        let bestIter = 0
-        const pts: Pt[] = hist.map((h) => {
-          if (h.oos_score > run) {
-            run = h.oos_score
-            bestIter = h.iteration
-          }
-          return { iteration: h.iteration, oos_score: h.oos_score, best: run, accepted: h.accepted }
-        })
-        setSeries(pts)
-        setBest({ score: run, params: r.best_params ?? {}, iter: bestIter })
-        setHoldout(r.holdout ?? null)
-        setRegimes(r.regimes ?? null)
-        setSimulated(Boolean(r.simulated))
-        setFlash(true)
-        setTimeout(() => setFlash(false), 700)
-      })
-      .finally(() => setRunning(false))
+    setError(null)
+    setElapsed(0)
+    histRef.current = []
+    setHistory([])
+    setSeries([])
+    setHoldout(null)
+    setRegimes(null)
+    setBest({ score: 0, params: {}, iter: 0 })
+    const t0 = Date.now()
+    timerRef.current = setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 1000)
+    cancelRef.current = streamLearn(
+      {
+        strategy,
+        tickers: tickersInput.split(',').map((t) => t.trim().toUpperCase()).filter(Boolean),
+        start: '2023-01-03',
+        end: '2025-01-03',
+        n_iter: nIter,
+      },
+      {
+        onIter: (it) => {
+          histRef.current = [...histRef.current, it]
+          setHistory(histRef.current)
+          setSeries((prev) => {
+            // seed the running best from the first real score — real OOS
+            // scores can all be negative, so 0 is not a safe floor
+            const run = prev.length ? prev[prev.length - 1].best : -Infinity
+            return [
+              ...prev,
+              {
+                iteration: it.iteration,
+                oos_score: it.oos_score,
+                best: Math.max(run, it.oos_score),
+                accepted: it.accepted,
+              },
+            ]
+          })
+          setBest((b) =>
+            b.iter === 0 || it.oos_score > b.score
+              ? { score: it.oos_score, params: it.params ?? b.params, iter: it.iteration }
+              : b,
+          )
+        },
+        onDone: (r) => {
+          stopClock()
+          setBest((b) => ({ ...b, params: r.best_params ?? b.params }))
+          setHoldout(r.holdout ?? null)
+          setRegimes(r.regimes ?? null)
+          setRunning(false)
+          setFlash(true)
+          setTimeout(() => setFlash(false), 700)
+        },
+        onError: (msg) => {
+          stopClock()
+          setError(msg)
+          setRunning(false)
+        },
+      },
+    )
   }
-
-  // one real run on mount so the panel isn't empty
-  useEffect(() => {
-    runLearn()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   const accepted = series.filter((p) => p.accepted)
   const rejected = series.filter((p) => !p.accepted)
   const acceptCount = history.filter((h) => h.accepted).length
+
+  // real OOS scores can be strongly negative — a fixed [0.3, 1] domain (fit
+  // for the old demo data) would clip every real point off the chart. Shared
+  // by the scatter and the overlay line so they stay aligned.
+  const yDomain = useMemo<[number, number]>(() => {
+    const vals = series.map((p) => p.oos_score)
+    if (holdout?.score != null) vals.push(holdout.score)
+    if (!vals.length) return [0, 1]
+    const lo = Math.min(...vals)
+    const hi = Math.max(...vals)
+    const pad = Math.max(0.05, (hi - lo) * 0.08)
+    return [lo - pad, hi + pad]
+  }, [series, holdout])
 
   return (
     <motion.section
@@ -204,16 +254,16 @@ export default function LearningPanel() {
             style={{ width: 7, height: 7, borderRadius: 99, background: 'var(--color-iris)', boxShadow: '0 0 9px var(--color-iris)' }}
           />
           <h2 className="panel-title">Learning Loop</h2>
-          {simulated && (
+          {error && (
             <span
               className="pill"
               style={{
-                borderColor: 'color-mix(in srgb, var(--color-amber) 55%, transparent)',
-                color: 'var(--color-amber)',
+                borderColor: 'color-mix(in srgb, var(--color-down) 55%, transparent)',
+                color: 'var(--color-down)',
               }}
-              title="The backend run failed or timed out — these numbers are demo data, not a real optimization."
+              title={error}
             >
-              ⚠ SIMULATED
+              ⚠ RUN FAILED
             </span>
           )}
           <span className="num text-[10px] text-[var(--color-ink-faint)]">
@@ -251,7 +301,7 @@ export default function LearningPanel() {
             title="Iterations"
           />
           <button onClick={runLearn} disabled={running} className="btn px-2.5 py-0.5 text-[10px]">
-            {running ? 'Learning…' : 'Run'}
+            {running ? `Learning… ${elapsed}s` : 'Run'}
           </button>
         </div>
       </header>
@@ -263,6 +313,15 @@ export default function LearningPanel() {
           <div className="pointer-events-none absolute left-1 top-0 z-10 text-[9px] tracking-[0.12em] text-[var(--color-ink-faint)]">
             OOS OBJECTIVE
           </div>
+          {!series.length && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-8 text-center">
+              <span className="max-w-md text-[10.5px] leading-relaxed text-[var(--color-ink-faint)]">
+                {running
+                  ? `Optimizer warming up… ${elapsed}s. Each dot lands here live as an iteration finishes — a real multi-ticker run takes minutes to tens of minutes.`
+                  : 'No learn run yet — pick a strategy and press Run to watch the walk-forward search live. The autopilot also runs these on schedule; see its activity feed.'}
+              </span>
+            </div>
+          )}
           <ResponsiveContainer width="100%" height="100%">
             <ScatterChart margin={{ top: 14, right: 8, left: -8, bottom: 0 }}>
               <CartesianGrid stroke="var(--color-edge-soft)" strokeDasharray="2 4" vertical={false} />
@@ -277,7 +336,7 @@ export default function LearningPanel() {
               <YAxis
                 type="number"
                 dataKey="oos_score"
-                domain={[0.3, 1]}
+                domain={yDomain}
                 tick={{ fill: 'var(--color-ink-faint)', fontSize: 9 }}
                 axisLine={false}
                 tickLine={false}
@@ -323,7 +382,7 @@ export default function LearningPanel() {
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={series} margin={{ top: 14, right: 8, left: -8, bottom: 0 }}>
                 <XAxis type="number" dataKey="iteration" domain={['dataMin', 'dataMax']} hide />
-                <YAxis type="number" domain={[0.3, 1]} hide width={28} />
+                <YAxis type="number" domain={yDomain} hide width={28} />
                 <Line
                   type="stepAfter"
                   dataKey="best"

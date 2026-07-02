@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Area,
   AreaChart,
@@ -8,7 +8,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { postBacktest } from '../api'
+import { describeRunError, postBacktest } from '../api'
 import type { BacktestResponse } from '../types'
 import { CLOSED_REASONS, SIZING_METHODS, STRATEGY_NAMES } from '../types'
 import Panel from './Panel'
@@ -136,6 +136,9 @@ const inputCls =
 export default function BacktestPanel({ className }: { className?: string }) {
   const [bt, setBt] = useState<BacktestResponse | null>(null)
   const [running, setRunning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [elapsed, setElapsed] = useState(0)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const simulated = Boolean(bt?.simulated)
 
   // run-config strip state
@@ -145,6 +148,10 @@ export default function BacktestPanel({ className }: { className?: string }) {
   const [end, setEnd] = useState('2025-01-03')
   const [sizing, setSizing] = useState<string>('fixed_fraction')
 
+  useEffect(() => () => {
+    if (timerRef.current) clearInterval(timerRef.current)
+  }, [])
+
   const run = (
     cfg: { strategy: string; tickersCsv: string; start: string; end: string; sizing: string },
   ) => {
@@ -152,8 +159,12 @@ export default function BacktestPanel({ className }: { className?: string }) {
       .split(/[,\s]+/)
       .map((t) => t.trim().toUpperCase())
       .filter(Boolean)
-    if (!tickers.length || !cfg.start || !cfg.end) return
+    if (!tickers.length || !cfg.start || !cfg.end || running) return
     setRunning(true)
+    setError(null)
+    setElapsed(0)
+    const t0 = Date.now()
+    timerRef.current = setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 1000)
     postBacktest({
       strategy: cfg.strategy,
       params: { delta: 0.3, dte: 30 },
@@ -163,13 +174,14 @@ export default function BacktestPanel({ className }: { className?: string }) {
       risk: { method: cfg.sizing },
     })
       .then(setBt)
-      .finally(() => setRunning(false))
+      // keep the last real result on screen; the error strip says what failed
+      .catch((e) => setError(describeRunError(e)))
+      .finally(() => {
+        if (timerRef.current) clearInterval(timerRef.current)
+        timerRef.current = null
+        setRunning(false)
+      })
   }
-
-  useEffect(() => {
-    run({ strategy: 'bull_put_spread', tickersCsv: 'SPY, QQQ, NVDA, AAPL', start: '2023-01-03', end: '2025-01-03', sizing: 'fixed_fraction' })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   const rows = useMemo(() => (bt ? buildRows(bt) : []), [bt])
 
@@ -265,12 +277,31 @@ export default function BacktestPanel({ className }: { className?: string }) {
             ))}
           </select>
           <button type="submit" className="btn px-3 py-1 text-[10px]" disabled={running}>
-            {running ? 'Running…' : 'Run'}
+            {running ? `Running… ${elapsed}s` : 'Run'}
           </button>
         </form>
 
+        {error && (
+          <div
+            className="shrink-0 rounded-md border px-2.5 py-1.5 text-[10px]"
+            style={{
+              borderColor: 'color-mix(in srgb, var(--color-down) 45%, transparent)',
+              color: 'var(--color-down)',
+              background: 'color-mix(in srgb, var(--color-down) 8%, transparent)',
+            }}
+          >
+            Run failed: {error}
+          </div>
+        )}
+
         {!bt ? (
-          <div className="w-full flex-1 animate-pulse rounded-lg bg-[var(--color-panel-2)]/40" />
+          <div className="flex w-full flex-1 items-center justify-center rounded-lg border border-dashed border-[var(--color-edge-soft)] bg-[var(--color-void)]/20 px-6 text-center">
+            <span className="max-w-md text-[10.5px] leading-relaxed text-[var(--color-ink-faint)]">
+              {running
+                ? `Running the backtest on full historical chains… ${elapsed}s. Multi-ticker, multi-year runs can take several minutes — longer while a research batch has the CPU.`
+                : 'No backtest yet — pick a strategy, tickers and dates, then press Run. Results shown here are always real engine output; nothing simulated is ever displayed in their place.'}
+            </span>
+          </div>
         ) : (
           <div
             className="flex min-h-0 flex-1 flex-col gap-2.5"
