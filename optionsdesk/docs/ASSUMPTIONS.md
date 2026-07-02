@@ -75,6 +75,15 @@ Each one biases results in a known direction; read this before trusting a number
 - **No regime awareness.** 4.5 years is one macro regime sample. A strategy
   tuned on 2021–2026 embeds that period's vol structure.
 
+## Record keeping
+- **Everything is journaled to SQLite.** Every fill (with legs and config
+  attribution), every mark, every autopilot event, promotion and demotion is
+  appended once to `ledger.db` (WAL mode, co-located with the state files,
+  inside the Docker `paperstate` volume) and never rewritten. The JSON state
+  files are operational and roll old entries off; the ledger is the permanent
+  forward-test record. An audit-write failure is logged loudly but can never
+  block trading.
+
 ## AutoPilot
 - **Paper only, off by default.** The autonomous loop drives the paper broker
   exclusively; it cannot place real orders. The kill switch must be engaged by

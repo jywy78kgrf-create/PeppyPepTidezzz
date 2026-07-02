@@ -91,6 +91,7 @@ class PaperBroker:
         starting_cash: float = 100_000.0,
     ) -> None:
         self.path = Path(state_dir) / "paper.json"
+        self._ledger = None  # lazy; co-located with the state dir
         self.cost = cost_model
         self._starting_cash = starting_cash
         self._cash = starting_cash
@@ -138,7 +139,9 @@ class PaperBroker:
             "positions": [self._pos_to_dict(p) for p in self._positions],
             "history": self._history,
         }
-        self.path.write_text(json.dumps(data, indent=2, default=str))
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2, default=str))
+        tmp.replace(self.path)  # atomic: a crash mid-write can't corrupt state
 
     @staticmethod
     def _history_from(data: dict) -> list[dict]:
@@ -240,7 +243,23 @@ class PaperBroker:
         )
         self._positions.append(pos)
         self._save()
+        try:  # permanent audit copy (never fatal)
+            self.ledger.record_open(
+                ticker=pos.ticker, opened=pos.opened.isoformat(),
+                strategy=spec.name, qty=qty, cost_basis=pos.cost_basis,
+                legs=legs_state,
+                config_id=(spec.meta or {}).get("config_id"))
+        except Exception:  # noqa: BLE001
+            pass
         return pos
+
+    @property
+    def ledger(self):
+        """Append-only audit ledger living next to this broker's state file."""
+        if self._ledger is None:
+            from ..journal import get_ledger
+            self._ledger = get_ledger(self.path.parent / "ledger.db")
+        return self._ledger
 
     def positions(self) -> list[PaperPosition]:
         """Return all positions (open and closed)."""
@@ -369,13 +388,21 @@ class PaperBroker:
         }
         self._history.append(point)
         self._save()
+        try:  # permanent audit copy (never fatal)
+            self.ledger.record_mark(
+                point["ts"], point["equity"], point["cash"], point["upnl"],
+                open_positions=sum(1 for p in self._positions
+                                   if p.status == "OPEN"),
+                live=bool(live))
+        except Exception:  # noqa: BLE001
+            pass
         return point
 
     def history(self) -> list[dict]:
         """All persisted equity snapshots, oldest first."""
         return [dict(p) for p in self._history]
 
-    def close(self, idx: int) -> PaperPosition:
+    def close(self, idx: int, reason: str = "manual") -> PaperPosition:
         """Close the position at ``idx`` at its last-marked liquidation value."""
         if idx < 0 or idx >= len(self._positions):
             raise IndexError(f"position index {idx} out of range")
@@ -387,6 +414,13 @@ class PaperBroker:
         pos.status = "CLOSED"
         pos.upnl = round(pos.current_value - pos.cost_basis, 4)
         self._save()
+        try:  # permanent audit copy (never fatal)
+            self.ledger.record_close(
+                ticker=pos.ticker, opened=pos.opened.isoformat()
+                if hasattr(pos.opened, "isoformat") else str(pos.opened),
+                close_value=pos.current_value, pnl=pos.upnl, reason=reason)
+        except Exception:  # noqa: BLE001
+            pass
         return pos
 
     def equity(self) -> dict:

@@ -176,9 +176,15 @@ class AutoPilot:
         tmp.replace(self._state_path)
 
     def _log(self, kind: str, detail: str) -> None:
-        self._state["activity"].append(
-            {"ts": self.now_fn().isoformat(), "kind": kind, "detail": detail})
+        ts = self.now_fn().isoformat()
+        self._state["activity"].append({"ts": ts, "kind": kind, "detail": detail})
         self._state["activity"] = self._state["activity"][-ACTIVITY_CAP:]
+        try:  # in-memory feed rolls at ACTIVITY_CAP; the ledger keeps it all
+            from ..journal import get_ledger
+            get_ledger(self._state_path.parent / "ledger.db").record_event(
+                ts, kind, detail)
+        except Exception:  # noqa: BLE001
+            pass
 
     # ------------------------------------------------------------------ #
     # Kill switch
@@ -354,6 +360,12 @@ class AutoPilot:
             self._state["promoted"] = promoted[: self.cfg.max_promoted]
             self._log("promote", f"{strategy} holdout={entry['holdout_score']} "
                                  f"ret={entry['holdout_return']} on {','.join(batch)}")
+            try:
+                from ..journal import get_ledger
+                get_ledger(self._state_path.parent / "ledger.db").record_promotion(
+                    ts=now.isoformat(), action="promoted", config=entry)
+            except Exception:  # noqa: BLE001
+                pass
             self._save()
         return entry
 
@@ -423,6 +435,8 @@ class AutoPilot:
             if reason is None:
                 continue
             try:
+                closed = broker.close(idx, reason=reason)
+            except TypeError:  # broker without reason support (fakes)
                 closed = broker.close(idx)
             except Exception as exc:  # noqa: BLE001
                 self._log("error", f"close {pos.ticker} failed: {exc}")
@@ -484,6 +498,7 @@ class AutoPilot:
                     spec = builder(chain, underlying, dict(config.get("params") or {}))
                     if spec is None:
                         continue
+                    spec.meta["config_id"] = config["id"]  # ledger attribution
                     min_expiry = min(leg.expiry for leg in spec.legs)
                     if not self._earnings_ok(tku, min_expiry,
                                              config["strategy"], now):
@@ -562,6 +577,14 @@ class AutoPilot:
                 cfgp["consecutive_losses"] = cfgp.get("consecutive_losses", 0) + 1
                 if cfgp["consecutive_losses"] >= self.cfg.demote_after_losses:
                     cfgp["active"] = False
+                    try:
+                        from ..journal import get_ledger
+                        get_ledger(self._state_path.parent / "ledger.db"
+                                   ).record_promotion(
+                            ts=self.now_fn().isoformat(), action="demoted",
+                            config=cfgp)
+                    except Exception:  # noqa: BLE001
+                        pass
                     self._log("demote", f"{cfgp['strategy']} demoted after "
                                         f"{cfgp['consecutive_losses']} consecutive "
                                         f"losing closes (realized "

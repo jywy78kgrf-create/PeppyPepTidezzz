@@ -418,7 +418,37 @@ def paper_mark() -> dict:
 
 @app.get("/api/paper/history")
 def paper_history() -> dict:
-    return serialize({"points": _paper().history()})
+    """Equity history. Served from the permanent SQLite ledger when it has
+    data (survives state-file rollover); falls back to the JSON state."""
+    pb = _paper()
+    points = pb.ledger.equity_series()
+    if not points:
+        points = pb.history()
+    return serialize({"points": points})
+
+
+# --------------------------------------------------------------------------- #
+# Ledger — the permanent forward-test record (append-only SQLite)
+# --------------------------------------------------------------------------- #
+@app.get("/api/ledger/stats")
+def ledger_stats() -> dict:
+    return serialize(_paper().ledger.stats())
+
+
+@app.get("/api/ledger/trades")
+def ledger_trades(limit: int = Query(500, ge=1, le=10000),
+                  closed_only: bool = Query(False)) -> dict:
+    return serialize({"trades": _paper().ledger.trades(limit, closed_only=closed_only)})
+
+
+@app.get("/api/ledger/events")
+def ledger_events(limit: int = Query(500, ge=1, le=10000)) -> dict:
+    return serialize({"events": _paper().ledger.events(limit)})
+
+
+@app.get("/api/ledger/promotions")
+def ledger_promotions(limit: int = Query(200, ge=1, le=2000)) -> dict:
+    return serialize({"promotions": _paper().ledger.promotions(limit)})
 
 
 @app.post("/api/paper/open")
