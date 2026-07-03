@@ -68,19 +68,24 @@ class RiskConfig:
 def unit_risk_for(spec: StrategySpec, equity: float, cfg: RiskConfig) -> float:
     """Dollar risk of a single 1-lot of ``spec`` (basis for sizing).
 
-    Three explicit branches:
+    Branches, in order:
 
+    0. the builder supplied ``meta["risk_basis"]`` (a practical sizing risk
+       for structures whose theoretical max loss is unbounded or unusable —
+       covered calls marked stock-to-zero, naked straddles): trust it as-is.
     1. ``spec.max_loss`` finite, positive and plausible -> use it as-is
        (normal defined-risk structures such as spreads and condors).
     2. finite/positive but pathologically large -> cap at **5x** the
        default-fraction risk (``5 * default_unit_risk_frac * equity``).  This
        covers structures whose theoretical max loss is real but not practical
-       for sizing (e.g. a covered call marked stock-to-zero) without starving
-       them to zero contracts.
+       for sizing without starving them to zero contracts.
     3. missing, non-positive or infinite ``max_loss`` -> fall back to
        ``default_unit_risk_frac`` of equity (floored at $1) so undefined-risk
        structures (naked short premium) still size sanely.
     """
+    rb = (getattr(spec, "meta", None) or {}).get("risk_basis")
+    if isinstance(rb, (int, float)) and math.isfinite(rb) and rb > 0:
+        return float(rb)             # branch 0: builder-declared sizing risk
     fallback = max(cfg.default_unit_risk_frac * equity, 1.0)
     ml = spec.max_loss
     if ml is None or not math.isfinite(ml) or ml <= 0:

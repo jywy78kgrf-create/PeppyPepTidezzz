@@ -89,8 +89,16 @@ class StrategySuggester:
 
     def _score(self, spec: StrategySpec, chain: list[OptionQuote]) -> float:
         """Blend edge, POP, reward/risk, and liquidity into a 0..1-ish score."""
-        # Edge normalised by capital at risk (fallback to a nominal $100).
-        risk = spec.max_loss if spec.max_loss > 0 else 100.0
+        # Capital at risk: prefer the builder's practical sizing basis
+        # (undefined-risk structures report max_loss = inf), then max_loss,
+        # then a nominal $100.
+        rb = spec.meta.get("risk_basis")
+        if isinstance(rb, (int, float)) and math.isfinite(rb) and rb > 0:
+            risk = float(rb)
+        elif spec.max_loss > 0 and math.isfinite(spec.max_loss):
+            risk = spec.max_loss
+        else:
+            risk = 100.0
         edge_norm = _clip01(0.5 + spec.expected_edge / (2.0 * risk))
 
         pop = _clip01(spec.pop)

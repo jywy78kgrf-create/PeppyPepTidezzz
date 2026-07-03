@@ -336,11 +336,21 @@ def covered_call(chain: list[OptionQuote], underlying: float,
     sigma = effective_iv(short, p["r"])
     pop = _pop_from_d2(underlying, short.strike - credit / CONTRACT_MULTIPLIER, T, p["r"],
                        sigma, profit_if_above=True)
-    return _finalize("covered_call", chain, legs, credit, max_profit, max_loss, pop,
+    spec = _finalize("covered_call", chain, legs, credit, max_profit, max_loss, pop,
                      underlying, p,
                      rationale=(f"Sell {short.strike:.1f}C @ {exp} vs 100 shares for "
                                 f"{credit/100:.2f} credit; income on a long-stock holding."),
                      tags=["neutral", "income", "covered", "theta"])
+    # stock-to-zero is the honest max loss but useless as a sizing basis —
+    # every sizer starves it to 0 contracts. The desk simulates the overlay
+    # (short call) only, so size on a 2-sigma adverse rally net of the
+    # strike's OTM cushion. Farther-OTM strikes -> smaller basis; the
+    # optimizer can trade that off against premium.
+    move2 = 2.0 * underlying * sigma * math.sqrt(max(T, 1e-6))
+    cushion = max(short.strike - underlying, 0.0)
+    spec.meta["risk_basis"] = round(
+        max((move2 - cushion) * CONTRACT_MULTIPLIER - credit, 50.0), 2)
+    return spec
 
 
 def calendar_call(chain: list[OptionQuote], underlying: float,
@@ -395,11 +405,13 @@ def short_straddle(chain: list[OptionQuote], underlying: float,
     ]
     credit = _net_premium(legs, chain)
     max_profit = max(0.0, credit)
-    # Undefined risk: report risk at a 1-sigma adverse move for sizing.
+    # Undefined risk: max_loss is honestly unbounded (displayed as such);
+    # sizing uses a 2-sigma adverse move via meta["risk_basis"] below.
     T = max((exp - chain[0].asof).days, 0) / 365.0
     sigma = effective_iv(c, p["r"])
     move = underlying * sigma * math.sqrt(max(T, 1e-6))
-    max_loss = max(0.0, move * CONTRACT_MULTIPLIER - max_profit)
+    max_loss = float("inf")
+    risk_basis = round(max(2.0 * move * CONTRACT_MULTIPLIER - max_profit, 50.0), 2)
     # P(profit) = P(finish inside the breakeven band) = P(below upper BE) +
     # P(above lower BE) - 1 (same inclusion-exclusion as the iron condor).
     pop = max(0.0,
@@ -407,11 +419,13 @@ def short_straddle(chain: list[OptionQuote], underlying: float,
                            sigma, profit_if_above=False) +
               _pop_from_d2(underlying, pu.strike - credit / CONTRACT_MULTIPLIER, T, p["r"],
                            sigma, profit_if_above=True) - 1.0)
-    return _finalize("short_straddle", chain, legs, credit, max_profit, max_loss, pop,
+    spec = _finalize("short_straddle", chain, legs, credit, max_profit, max_loss, pop,
                      underlying, p,
                      rationale=(f"Sell {c.strike:.1f} straddle @ {exp} for {credit/100:.2f} "
                                 f"credit; short vol, undefined risk."),
                      tags=["neutral", "credit", "short-vol", "undefined-risk", "theta"])
+    spec.meta["risk_basis"] = risk_basis
+    return spec
 
 
 def long_strangle(chain: list[OptionQuote], underlying: float,

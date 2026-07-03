@@ -541,3 +541,44 @@ def test_alpha_vantage_http_calls_use_explicit_timeout(monkeypatch):
     out = av.quote("AAPL")
     assert seen["timeout"] == 9.5, "httpx call must carry an explicit timeout"
     assert out["symbol"] == "AAPL"
+
+
+def test_unit_risk_branch_risk_basis_preferred():
+    """Builders that declare meta['risk_basis'] (covered_call, short_straddle)
+    size on it regardless of max_loss — including max_loss = inf."""
+    cfg = RiskConfig()
+    sp = _spec(max_loss=float("inf"))
+    sp.meta["risk_basis"] = 1_728.0
+    assert unit_risk_for(sp, 100_000.0, cfg) == 1_728.0
+    sp2 = _spec(max_loss=18_000.0)          # stock-to-zero style
+    sp2.meta["risk_basis"] = 2_000.0
+    assert unit_risk_for(sp2, 100_000.0, cfg) == 2_000.0
+    # degenerate risk_basis values fall through to the max_loss branches
+    for bad in (0.0, -1.0, float("nan"), float("inf")):
+        sp3 = _spec(max_loss=500.0)
+        sp3.meta["risk_basis"] = bad
+        assert unit_risk_for(sp3, 100_000.0, cfg) == 500.0
+
+
+def test_covered_call_and_straddle_declare_risk_basis():
+    """covered_call must be sizeable (it produced 0 trades everywhere before
+    risk_basis existed) and short_straddle must report honest unbounded
+    max_loss while sizing on a finite 2-sigma basis."""
+    from optdesk.backtest.engine import _underlying
+    from optdesk.strategies.library import STRATEGIES
+
+    store = _store()
+    tk = store.tickers()[0]
+    day = store.trading_dates(tk)[5]
+    chain = store.chain(tk, day)
+    und = _underlying(chain)
+
+    cc = STRATEGIES["covered_call"](chain, und, {})
+    assert cc is not None
+    rb = cc.meta["risk_basis"]
+    assert 0 < rb < cc.max_loss          # far below stock-to-zero
+
+    ss = STRATEGIES["short_straddle"](chain, und, {})
+    assert ss is not None
+    assert ss.max_loss == float("inf")   # honest: undefined risk
+    assert 0 < ss.meta["risk_basis"] < float("inf")

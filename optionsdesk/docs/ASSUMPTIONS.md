@@ -33,6 +33,20 @@ Each one biases results in a known direction; read this before trusting a number
 - **Greeks from data; Black-Scholes fallback.** Data-supplied greeks are used
   as-is. Missing greeks are recomputed with Black-Scholes from the quoted IV —
   European, no dividend yield term unless configured.
+- **Undefined-risk structures size on a 2-sigma basis, not max loss.**
+  `short_straddle` reports its max loss honestly as unbounded and
+  `covered_call` as stock-to-zero; both are unusable for position sizing (the
+  straddle would size on fiction, the covered call would never size at all —
+  it produced 0 trades in every research batch before this). Each builder
+  therefore declares `meta["risk_basis"]`: a 2-sigma adverse move over the
+  option's life (net of the strike's OTM cushion for the covered call), which
+  the sizer prefers over `max_loss`. Tail moves beyond 2 sigma exceed the
+  sized risk — that residual is real and is why these carry the
+  `undefined-risk` tag.
+- **covered_call is simulated as the short-call overlay only.** The engine
+  does not hold the 100 shares; backtest and paper P&L measure the overlay
+  (economically a short call with the stock leg accounted elsewhere). Its
+  results must be read as overlay income, not total covered-call P&L.
 
 ## Costs & carry
 - **Reg-T-style margin, re-marked daily.** Capital-at-risk for credit
