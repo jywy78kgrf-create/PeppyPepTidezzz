@@ -270,7 +270,7 @@ export default function LearningPanel() {
             iter {history.length ? history[history.length - 1].iteration : 0}
           </span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
           <HoldoutChip holdout={holdout} />
           <span className="num text-[10px] text-[var(--color-ink-faint)]">
             {acceptCount} accepted

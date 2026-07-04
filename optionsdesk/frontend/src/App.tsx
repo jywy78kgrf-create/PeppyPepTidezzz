@@ -4,7 +4,8 @@ import TickerTape from './components/TickerTape'
 import SuggestionsPanel from './components/SuggestionsPanel'
 import BacktestPanel from './components/BacktestPanel'
 import LearningPanel from './components/LearningPanel'
-import PaperPanel from './components/PaperPanel'
+import TradingDesk from './components/TradingDesk'
+import AutoPilotPanel from './components/AutoPilotPanel'
 import ErrorBoundary from './components/ErrorBoundary'
 
 // Lazy-load the WebGL background so the desk paints instantly.
@@ -35,19 +36,22 @@ export default function App() {
           <HeaderBar />
         </ErrorBoundary>
 
-        {/* multi-panel desk grid: 3 cols, suggestions tall on the left,
-            backtest + learning stacked center, paper on the right */}
-        <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-12 lg:grid-rows-2">
+        {/* the trading desk is the main stage (top, 3/4 width + tall row);
+            the autopilot rail sits beside it; research tools live below */}
+        <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-12 lg:grid-rows-[minmax(0,8fr)_minmax(0,5fr)]">
+          <ErrorBoundary label="Trading Desk">
+            <TradingDesk className="lg:col-span-9" />
+          </ErrorBoundary>
+          <ErrorBoundary label="AutoPilot">
+            <AutoPilotPanel className="lg:col-span-3" />
+          </ErrorBoundary>
           <ErrorBoundary label="Suggestions">
-            <SuggestionsPanel className="lg:col-span-3 lg:row-span-2" />
+            <SuggestionsPanel className="lg:col-span-3" />
           </ErrorBoundary>
           <ErrorBoundary label="Backtest">
-            <BacktestPanel className="lg:col-span-6 lg:row-span-1" />
+            <BacktestPanel className="lg:col-span-5" />
           </ErrorBoundary>
-          <ErrorBoundary label="Paper">
-            <PaperPanel className="lg:col-span-3 lg:row-span-2" />
-          </ErrorBoundary>
-          <div className="flex min-h-0 lg:col-span-6 lg:row-span-1">
+          <div className="flex min-h-0 lg:col-span-4">
             <ErrorBoundary label="Learning">
               <LearningPanel />
             </ErrorBoundary>

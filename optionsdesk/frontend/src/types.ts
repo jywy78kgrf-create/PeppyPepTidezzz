@@ -207,6 +207,21 @@ export interface PaperGreeksResponse {
   unmatched_legs: number
 }
 
+/** GET /api/ledger/trades — rows from the append-only forward-test record. */
+export interface LedgerTrade {
+  ticker: string
+  opened: string
+  strategy: string
+  config_id: string | null
+  qty: number
+  cost_basis: number
+  legs: unknown[]
+  closed: string | null
+  close_value: number | null
+  pnl: number | null
+  close_reason: string | null
+}
+
 /* --------------------------------------------------------------------- */
 /*  AutoPilot                                                             */
 /* --------------------------------------------------------------------- */

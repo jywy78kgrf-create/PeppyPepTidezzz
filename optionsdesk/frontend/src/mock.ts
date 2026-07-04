@@ -647,3 +647,31 @@ export function mockPaperGreeks() {
     unmatched_legs: 0,
   }
 }
+
+/* ------------------------------- ledger -------------------------------- */
+import type { LedgerTrade } from './types'
+
+/** Demo closed-trade record for standalone mode (backend unreachable). */
+export function mockLedgerTrades(): LedgerTrade[] {
+  const mk = (
+    ticker: string, strategy: string, daysAgo: number,
+    basis: number, pnl: number, reason: string,
+  ): LedgerTrade => {
+    const closed = new Date(Date.now() - daysAgo * 86_400_000)
+    const opened = new Date(closed.getTime() - 6 * 86_400_000)
+    return {
+      ticker, strategy, opened: opened.toISOString(),
+      config_id: `${strategy}@demo`, qty: 1, cost_basis: basis, legs: [],
+      closed: closed.toISOString(), close_value: basis + pnl, pnl,
+      close_reason: reason,
+    }
+  }
+  return [
+    mk('NVDA', 'long_call', 0.4, 812, 431, 'target'),
+    mk('SPY', 'short_straddle', 1.1, -1240, 386, 'target'),
+    mk('AMD', 'long_call', 1.8, 655, -212, 'stop'),
+    mk('QQQ', 'short_straddle', 2.6, -980, 291, 'close_dte'),
+    mk('MSFT', 'long_call', 3.2, 540, 184, 'target'),
+    mk('XLE', 'short_straddle', 4.0, -720, -158, 'stop'),
+  ]
+}

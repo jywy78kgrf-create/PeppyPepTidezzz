@@ -14,6 +14,7 @@ import type {
   HoldoutInfo,
   LearnIteration,
   LearnResponse,
+  LedgerTrade,
   PaperBookResponse,
   PaperGreeksResponse,
   PaperHistoryResponse,
@@ -294,6 +295,17 @@ export function closePosition(idx: number): Promise<PaperBookResponse> {
       body: JSON.stringify({ idx }),
     }).then(() => request<PaperBookResponse>('/api/paper/positions')),
     () => mock.mockPaperClose(idx),
+  )
+}
+
+/** GET /api/ledger/trades — the forward-test's closed-trade record. */
+export function getLedgerTrades(limit = 40, closedOnly = true): Promise<{ trades: LedgerTrade[] }> {
+  return withFallback(
+    () =>
+      request<{ trades: LedgerTrade[] }>(
+        `/api/ledger/trades?limit=${limit}&closed_only=${closedOnly}`,
+      ),
+    () => ({ trades: mock.mockLedgerTrades() }),
   )
 }
 
