@@ -86,15 +86,20 @@ export default function HeaderBar() {
     // the change since the first history point on the current calendar day.
     const refresh = () => {
       getBrokerStatus().then(setBrokers)
-      getPaperBook().then((book) => setEquity(book.equity.total))
-      getPaperHistory().then((h) => {
-        const pts = h.points
-        if (pts.length === 0) return setDayPnl(0)
-        const today = new Date().toDateString()
-        const first =
-          pts.find((p) => new Date(p.ts).toDateString() === today) ?? pts[0]
-        setDayPnl(pts[pts.length - 1].equity - first.equity)
-      })
+      // strict calls: on failure keep the last real figures (never mock)
+      getPaperBook()
+        .then((book) => setEquity(book.equity.total))
+        .catch(() => {})
+      getPaperHistory()
+        .then((h) => {
+          const pts = h.points
+          if (pts.length === 0) return setDayPnl(0)
+          const today = new Date().toDateString()
+          const first =
+            pts.find((p) => new Date(p.ts).toDateString() === today) ?? pts[0]
+          setDayPnl(pts[pts.length - 1].equity - first.equity)
+        })
+        .catch(() => {})
     }
     refresh()
     const off = onSourceChange(setLive)

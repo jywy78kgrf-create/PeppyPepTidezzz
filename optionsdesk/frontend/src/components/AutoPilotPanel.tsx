@@ -28,10 +28,21 @@ export default function AutoPilotPanel({ className }: { className?: string }) {
   const [status, setStatus] = useState<AutoStatus | null>(null)
   const [events, setEvents] = useState<AutoActivityEvent[]>([])
   const [busy, setBusy] = useState(false)
+  // strict data layer: keep last real state on failure, say so — never mock
+  const [err, setErr] = useState<string | null>(null)
 
   const refresh = useCallback(() => {
-    getAutoStatus().then(setStatus)
-    getAutoActivity(30).then((r) => setEvents(r.events))
+    getAutoStatus()
+      .then((s) => {
+        setStatus(s)
+        setErr(null)
+      })
+      .catch(() => setErr('backend not answering — showing last known state'))
+    getAutoActivity(30)
+      .then((r) => setEvents(r.events))
+      .catch(() => {
+        /* keep last feed */
+      })
   }, [])
 
   useEffect(() => {
@@ -46,7 +57,17 @@ export default function AutoPilotPanel({ className }: { className?: string }) {
     try {
       const next = status.enabled ? await postAutoDisable() : await postAutoEnable()
       setStatus(next)
-      getAutoActivity(30).then((r) => setEvents(r.events))
+      setErr(null)
+      getAutoActivity(30)
+        .then((r) => setEvents(r.events))
+        .catch(() => {})
+    } catch {
+      // the command did NOT reach the backend — say so, loudly
+      setErr(
+        status.enabled
+          ? 'KILL did not reach the backend — the autopilot is still running. Retry.'
+          : 'ENGAGE did not reach the backend. Retry.',
+      )
     } finally {
       setBusy(false)
     }
@@ -109,6 +130,11 @@ export default function AutoPilotPanel({ className }: { className?: string }) {
       }
     >
       <div className="flex h-full min-h-0 flex-col gap-2">
+        {err && (
+          <div className="shrink-0 rounded border border-[color-mix(in_srgb,var(--color-down)_45%,transparent)] bg-[color-mix(in_srgb,var(--color-down)_8%,transparent)] px-2 py-1 text-[9.5px] text-[var(--color-down)]">
+            {err}
+          </div>
+        )}
         {tripped && status?.breaker?.reason && (
           <div className="shrink-0 rounded border border-[color-mix(in_srgb,var(--color-down)_35%,transparent)] px-2 py-1 text-[9.5px] text-[var(--color-down)]">
             {status.breaker.reason} — re-engage to resume.

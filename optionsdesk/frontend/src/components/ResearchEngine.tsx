@@ -23,12 +23,16 @@ export default function ResearchEngine() {
     let alive = true
     const load = () => {
       if (document.hidden) return
-      getResearchStatus().then((r) => {
-        if (alive) {
-          setSt(r)
-          setDrift(0)
-        }
-      })
+      getResearchStatus()
+        .then((r) => {
+          if (alive) {
+            setSt(r)
+            setDrift(0)
+          }
+        })
+        .catch(() => {
+          /* strict layer: keep last real telemetry, retry next poll */
+        })
     }
     load()
     const poll = setInterval(load, 5_000)

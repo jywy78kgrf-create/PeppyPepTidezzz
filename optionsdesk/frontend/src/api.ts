@@ -45,9 +45,12 @@ function setSource(live: boolean) {
   }
 }
 
-// Short timeout for polling/status endpoints; heavy compute (universe scan,
-// backtest, learn) needs much longer or it aborts to mock on real data.
-const TIMEOUT_FAST = 3000
+// Timeout for polling/status endpoints. Generous on purpose: with the
+// research engine saturating the CPU, even cheap endpoints can take several
+// seconds — a short timeout here made the header's SIMULATED light blink and
+// pushed fallback-capable calls onto mock data while the backend was merely
+// busy, not down.
+const TIMEOUT_FAST = 15000
 const TIMEOUT_HEAVY = 90000
 // Ceiling for user-initiated compute (backtest). Matches nginx's
 // proxy_read_timeout — a run that hasn't answered in an hour is dead.
@@ -234,126 +237,108 @@ export function streamLearn(req: LearnRequest, h: LearnStreamHandlers): () => vo
 }
 
 /* ------------------------------ paper --------------------------------- */
+/* STRICT ZONE. The trading desk and autopilot are the app's ground truth —
+ * they must NEVER show mock data (a saturated CPU once made the desk render
+ * a fictional book next to real ledger rows, with no badge). These calls
+ * either return real data or throw; components keep the last real state and
+ * surface a STALE indicator. Timeouts respect real work: a live mark hits
+ * Alpha Vantage once per open-position ticker. */
+
+const TIMEOUT_PAPER = 15_000
+const TIMEOUT_MARK = 60_000
 
 /** GET /api/paper/positions — the current paper book, marked. */
 export function getPaperBook(): Promise<PaperBookResponse> {
-  return withFallback(
-    () => request<PaperBookResponse>('/api/paper/positions'),
-    () => mock.mockPaperBook(),
-  )
+  return request<PaperBookResponse>('/api/paper/positions', undefined, TIMEOUT_PAPER)
 }
 
 /** POST /api/paper/mark — re-mark the book (live when AV is configured). */
 export function postPaperMark(): Promise<PaperBookResponse> {
-  return withFallback(
-    () => request<PaperBookResponse>('/api/paper/mark', { method: 'POST', body: '{}' }),
-    () => mock.mockPaperMark(),
+  return request<PaperBookResponse>(
+    '/api/paper/mark',
+    { method: 'POST', body: '{}' },
+    TIMEOUT_MARK,
   )
 }
 
 /** GET /api/paper/history — the real-world verification equity curve. */
 export function getPaperHistory(): Promise<PaperHistoryResponse> {
-  return withFallback(
-    () => request<PaperHistoryResponse>('/api/paper/history'),
-    () => mock.mockPaperHistory(),
-  )
+  return request<PaperHistoryResponse>('/api/paper/history', undefined, TIMEOUT_PAPER)
 }
 
-/** POST /api/paper/open — send a suggested strategy to the paper book. */
+/** POST /api/paper/open — send a suggested strategy to the paper book.
+ *  An open must never pretend to succeed: real ack or a thrown error. */
 export function openPaper(body: {
   ticker: string
   strategy: string
   date: string
   qty?: number
 }): Promise<{ ok: boolean }> {
-  return withFallback(
-    () =>
-      request<unknown>('/api/paper/open', {
-        method: 'POST',
-        body: JSON.stringify({ qty: 1, ...body }),
-      }).then(() => ({ ok: true })),
-    () => {
-      mock.mockPaperMark() // nudge the demo book so something visibly changes
-      return { ok: true }
-    },
-  )
+  return request<unknown>(
+    '/api/paper/open',
+    { method: 'POST', body: JSON.stringify({ qty: 1, ...body }) },
+    TIMEOUT_MARK,
+  ).then(() => ({ ok: true }))
 }
 
 /** GET /api/paper/greeks — aggregate greeks of the open paper book. */
 export function getPaperGreeks(): Promise<PaperGreeksResponse> {
-  return withFallback(
-    () => request<PaperGreeksResponse>('/api/paper/greeks'),
-    () => mock.mockPaperGreeks(),
-  )
+  return request<PaperGreeksResponse>('/api/paper/greeks', undefined, TIMEOUT_PAPER)
 }
 
 /** POST /api/paper/close — close the position at index `idx` in the book. */
 export function closePosition(idx: number): Promise<PaperBookResponse> {
-  return withFallback(
-    () => request<PaperBookResponse>('/api/paper/close', {
-      method: 'POST',
-      body: JSON.stringify({ idx }),
-    }).then(() => request<PaperBookResponse>('/api/paper/positions')),
-    () => mock.mockPaperClose(idx),
-  )
+  return request<PaperBookResponse>(
+    '/api/paper/close',
+    { method: 'POST', body: JSON.stringify({ idx }) },
+    TIMEOUT_MARK,
+  ).then(() => request<PaperBookResponse>('/api/paper/positions', undefined, TIMEOUT_PAPER))
 }
 
 /** GET /api/ledger/trades — the forward-test's closed-trade record. */
 export function getLedgerTrades(limit = 40, closedOnly = true): Promise<{ trades: LedgerTrade[] }> {
-  return withFallback(
-    () =>
-      request<{ trades: LedgerTrade[] }>(
-        `/api/ledger/trades?limit=${limit}&closed_only=${closedOnly}`,
-      ),
-    () => ({ trades: mock.mockLedgerTrades() }),
+  return request<{ trades: LedgerTrade[] }>(
+    `/api/ledger/trades?limit=${limit}&closed_only=${closedOnly}`,
+    undefined,
+    TIMEOUT_PAPER,
   )
 }
 
 /* ------------------------------ autopilot ------------------------------ */
+/* Also STRICT: a KILL that "succeeds" against the mock layer while the real
+ * backend never hears it would be the worst possible lie. */
 
 export function getAutoStatus(): Promise<AutoStatus> {
-  return withFallback(
-    () => request<AutoStatus>('/api/auto/status'),
-    () => mock.mockAutoStatus(),
-  )
+  return request<AutoStatus>('/api/auto/status', undefined, TIMEOUT_PAPER)
 }
 
 export function postAutoEnable(): Promise<AutoStatus> {
-  return withFallback(
-    () => request<AutoStatus>('/api/auto/enable', { method: 'POST', body: '{}' }),
-    () => mock.mockAutoToggle(true),
+  return request<AutoStatus>(
+    '/api/auto/enable',
+    { method: 'POST', body: '{}' },
+    TIMEOUT_PAPER,
   )
 }
 
 export function postAutoDisable(): Promise<AutoStatus> {
-  return withFallback(
-    () => request<AutoStatus>('/api/auto/disable', { method: 'POST', body: '{}' }),
-    () => mock.mockAutoToggle(false),
+  return request<AutoStatus>(
+    '/api/auto/disable',
+    { method: 'POST', body: '{}' },
+    TIMEOUT_PAPER,
   )
 }
 
 export function getAutoActivity(limit = 30): Promise<{ events: AutoActivityEvent[] }> {
-  return withFallback(
-    () => request<{ events: AutoActivityEvent[] }>(`/api/auto/activity?limit=${limit}`),
-    () => ({ events: mock.mockAutoActivity() }),
+  return request<{ events: AutoActivityEvent[] }>(
+    `/api/auto/activity?limit=${limit}`,
+    undefined,
+    TIMEOUT_PAPER,
   )
 }
 
-/** GET /api/auto/research — live engine telemetry. The offline fallback is an
- *  honest "idle" (never a fake crunching animation). */
+/** GET /api/auto/research — live engine telemetry. Strict: real or throw. */
 export function getResearchStatus(): Promise<ResearchStatus> {
-  return withFallback(
-    () => request<ResearchStatus>('/api/auto/research'),
-    () => ({
-      enabled: false,
-      current: { active: false },
-      last: null,
-      batches_done: 0,
-      sweep_total: 0,
-      sweep_done: 0,
-      sweep_number: 0,
-    }),
-  )
+  return request<ResearchStatus>('/api/auto/research', undefined, TIMEOUT_PAPER)
 }
 
 /* ------------------------------ live ---------------------------------- */

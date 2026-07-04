@@ -429,23 +429,34 @@ export default function TradingDesk({ className }: { className?: string }) {
   const [greeks, setGreeks] = useState<PaperGreeksResponse | null>(null)
   const [trades, setTrades] = useState<LedgerTrade[]>([])
   const [closing, setClosing] = useState<number | null>(null)
+  // strict data layer: on failure we KEEP the last real state and flag it
+  // stale — this desk never shows mock data
+  const [stale, setStale] = useState(false)
   const timer = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const refreshSide = useCallback(() => {
-    getPaperHistory().then((h) => setHistory(h.points))
-    getPaperGreeks().then(setGreeks)
-    getLedgerTrades(40, true).then((r) => setTrades(r.trades))
+    getPaperHistory().then((h) => setHistory(h.points)).catch(() => setStale(true))
+    getPaperGreeks().then(setGreeks).catch(() => setStale(true))
+    getLedgerTrades(40, true).then((r) => setTrades(r.trades)).catch(() => setStale(true))
   }, [])
 
   const mark = useCallback(() => {
-    postPaperMark().then((b) => {
-      setBook(b)
-      refreshSide()
-    })
+    postPaperMark()
+      .then((b) => {
+        setBook(b)
+        setStale(false)
+        refreshSide()
+      })
+      .catch(() => setStale(true))
   }, [refreshSide])
 
   useEffect(() => {
-    getPaperBook().then(setBook)
+    getPaperBook()
+      .then((b) => {
+        setBook(b)
+        setStale(false)
+      })
+      .catch(() => setStale(true))
     refreshSide()
   }, [refreshSide])
 
@@ -479,7 +490,10 @@ export default function TradingDesk({ className }: { className?: string }) {
     try {
       const b = await closePosition(idx)
       setBook(b)
+      setStale(false)
       refreshSide()
+    } catch {
+      setStale(true) // close did NOT happen — keep the position on screen
     } finally {
       setClosing(null)
     }
@@ -518,7 +532,23 @@ export default function TradingDesk({ className }: { className?: string }) {
       className={className}
       title="Trading Desk"
       subtitle="forward paper test — the numbers that decide if this goes live"
-      right={book ? <LivePill live={book.live} asof={book.asof} /> : null}
+      right={
+        <span className="flex items-center gap-1.5">
+          {stale && (
+            <span
+              className="pill"
+              style={{
+                borderColor: 'color-mix(in srgb, var(--color-amber) 55%, transparent)',
+                color: 'var(--color-amber)',
+              }}
+              title="The backend didn't answer the last refresh (it may be busy crunching research). Showing the last real data — never mock. Retries automatically."
+            >
+              ⚠ STALE — reconnecting
+            </span>
+          )}
+          {book ? <LivePill live={book.live} asof={book.asof} /> : null}
+        </span>
+      }
     >
       <div className="flex h-full min-h-0 flex-col gap-2.5">
         {/* headline strip */}
