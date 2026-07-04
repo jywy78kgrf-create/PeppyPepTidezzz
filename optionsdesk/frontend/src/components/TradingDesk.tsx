@@ -578,7 +578,7 @@ export default function TradingDesk({ className }: { className?: string }) {
         </div>
 
         {/* main: equity curve + greeks | ledger rail */}
-        <div className="flex min-h-0 flex-[5] gap-2.5">
+        <div className="flex min-h-0 flex-[4] gap-2.5">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
             <div className="min-h-0 flex-1">
               {history.length >= 2 ? (
@@ -676,8 +676,8 @@ export default function TradingDesk({ className }: { className?: string }) {
           </div>
         </div>
 
-        {/* open positions */}
-        <div className="flex min-h-0 flex-[4] flex-col">
+        {/* open positions — the desk's centerpiece, gets the bigger share */}
+        <div className="flex min-h-0 flex-[5] flex-col">
           <div className="mb-1.5 flex shrink-0 items-baseline justify-between">
             <span className="panel-title">
               Open Positions
@@ -708,8 +708,7 @@ export default function TradingDesk({ className }: { className?: string }) {
               </div>
             ) : (
               <div className="grid h-full place-items-center rounded-lg border border-dashed border-[var(--color-edge-soft)] text-[10.5px] text-[var(--color-ink-faint)]">
-                No open positions — the autopilot opens them when promoted strategies signal, or
-                send one over from Suggestions.
+                No open positions — the autopilot opens them when a promoted strategy signals.
               </div>
             )}
           </div>

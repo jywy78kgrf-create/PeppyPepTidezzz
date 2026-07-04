@@ -1,8 +1,6 @@
 import { Suspense, lazy } from 'react'
 import HeaderBar from './components/HeaderBar'
 import TickerTape from './components/TickerTape'
-import SuggestionsPanel from './components/SuggestionsPanel'
-import BacktestPanel from './components/BacktestPanel'
 import LearningPanel from './components/LearningPanel'
 import TradingDesk from './components/TradingDesk'
 import AutoPilotPanel from './components/AutoPilotPanel'
@@ -36,22 +34,18 @@ export default function App() {
           <HeaderBar />
         </ErrorBoundary>
 
-        {/* the trading desk is the main stage (top, 3/4 width + tall row);
-            the autopilot rail sits beside it; research tools live below */}
-        <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-12 lg:grid-rows-[minmax(0,8fr)_minmax(0,5fr)]">
+        {/* the trading desk owns the screen: desk + autopilot rail on top
+            (~2/3 height), the learning loop full-width below. Suggestions
+            and manual backtest were retired once the autopilot took over
+            research — the desk IS the product now. */}
+        <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-12 lg:grid-rows-[minmax(0,13fr)_minmax(0,6fr)]">
           <ErrorBoundary label="Trading Desk">
             <TradingDesk className="lg:col-span-9" />
           </ErrorBoundary>
           <ErrorBoundary label="AutoPilot">
             <AutoPilotPanel className="lg:col-span-3" />
           </ErrorBoundary>
-          <ErrorBoundary label="Suggestions">
-            <SuggestionsPanel className="lg:col-span-3" />
-          </ErrorBoundary>
-          <ErrorBoundary label="Backtest">
-            <BacktestPanel className="lg:col-span-5" />
-          </ErrorBoundary>
-          <div className="flex min-h-0 lg:col-span-4">
+          <div className="flex min-h-0 lg:col-span-12">
             <ErrorBoundary label="Learning">
               <LearningPanel />
             </ErrorBoundary>
