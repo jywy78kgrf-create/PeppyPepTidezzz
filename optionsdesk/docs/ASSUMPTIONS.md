@@ -132,6 +132,12 @@ Each one biases results in a known direction; read this before trusting a number
   the paper book marks from realtime option quotes (LIVE pill); otherwise from
   the latest end-of-day chain (EOD pill). A live mark says what the book is
   worth, not what you could necessarily execute at.
+- **Market-hours aware (RTH, no holiday calendar).** Outside Mon-Fri
+  09:30-16:00 ET the desk makes NO Alpha Vantage calls (tape and marks serve
+  EOD data, labeled as such) and the autopilot's trade cycle is paused — no
+  opens or exits at stale weekend/overnight prices; research runs 24/7 since
+  it is offline compute. NYSE holidays are not modeled: on a holiday the desk
+  behaves like a weekday, wasting a few AV calls that return stale quotes.
 - **Live trading is a seam, not a promise.** The IBKR adapter maps legs to
   combo orders but has never placed a real order; validate in IB's paper
   environment first, with tiny size.

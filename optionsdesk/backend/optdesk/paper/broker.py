@@ -281,7 +281,8 @@ class PaperBroker:
         self._save()
         self.snapshot(live=False)
 
-    def mark_live(self, av, store: Optional[ChainStore] = None) -> dict:
+    def mark_live(self, av, store: Optional[ChainStore] = None,
+                  when: Optional[datetime] = None) -> dict:
         """Mark open positions from Alpha Vantage realtime option chains.
 
         Fetches ``av.realtime_options`` once per distinct position ticker,
@@ -290,12 +291,19 @@ class PaperBroker:
         ``live=True`` snapshot and returns ``{"live": True, "marked": n}``
         where ``n`` counts open positions with every leg matched live.
 
+        Outside regular US market hours no AV call is made at all — quotes
+        would be stale and every call wasted — and the EOD fallback is used
+        (``when`` overrides the clock; None means now).
+
         On any AV error (no key / premium note / rate limit / transport) it
         falls back to the latest historical chain via ``store`` (a fresh
         ChainStore when omitted) and returns ``{"live": False, "reason": ...}``.
         This method NEVER raises — it sits directly on the API path.
         """
         try:
+            from ..live.market_hours import market_open
+            if not market_open(when):
+                return self._mark_fallback(store, "market closed (EOD marks)")
             open_pos = [p for p in self._positions if p.status == "OPEN"]
             if not getattr(av, "configured", False):
                 return self._mark_fallback(store, "alpha_vantage_key not configured")

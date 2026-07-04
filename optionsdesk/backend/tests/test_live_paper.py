@@ -193,11 +193,15 @@ def test_realtime_options_without_key_errors_without_network(monkeypatch):
 # --------------------------------------------------------------------------- #
 # 2. PaperBroker.mark_live — leg matching, mid marks, snapshots
 # --------------------------------------------------------------------------- #
+from datetime import datetime as _dt
+_OPEN_TS = _dt(2026, 7, 1, 14, 0)  # Wed 10:00 ET — market open
+
+
 def test_mark_live_matches_legs_and_marks_at_mid(tmp_path, monkeypatch):
     monkeypatch.setattr(httpx, "get", _fake_get(_AV_PAYLOAD))
     pb = _broker_with_position(tmp_path)
 
-    out = pb.mark_live(AlphaVantage(key="k"))
+    out = pb.mark_live(AlphaVantage(key="k"), when=_OPEN_TS)
     assert out == {"live": True, "marked": 1}
 
     pos = pb.positions()[0]
@@ -216,7 +220,7 @@ def test_mark_live_unmatched_leg_held_at_open_price(tmp_path, monkeypatch):
     monkeypatch.setattr(httpx, "get", _fake_get(payload))
     pb = _broker_with_position(tmp_path)
 
-    out = pb.mark_live(AlphaVantage(key="k"))
+    out = pb.mark_live(AlphaVantage(key="k"), when=_OPEN_TS)
     assert out["live"] is True
     assert out["marked"] == 0, "a position with an unmatched leg is not fully live-marked"
     pos = pb.positions()[0]
@@ -228,7 +232,7 @@ def test_mark_live_av_error_falls_back_to_historical(tmp_path, monkeypatch):
     monkeypatch.setattr(httpx, "get", _fake_get({"Note": "rate limited"}))
     pb, store = _open_real_position(tmp_path)
 
-    out = pb.mark_live(AlphaVantage(key="k"), store=store)
+    out = pb.mark_live(AlphaVantage(key="k"), store=store, when=_OPEN_TS)
     assert out["live"] is False
     assert "rate limited" in out["reason"]
     v_fallback = pb.positions()[0].current_value
@@ -242,7 +246,7 @@ def test_mark_live_av_error_falls_back_to_historical(tmp_path, monkeypatch):
 def test_mark_live_without_key_falls_back_without_network(tmp_path, monkeypatch):
     monkeypatch.setattr(httpx, "get", _no_network)
     pb, store = _open_real_position(tmp_path)
-    out = pb.mark_live(AlphaVantage(key=""), store=store)
+    out = pb.mark_live(AlphaVantage(key=""), store=store, when=_OPEN_TS)
     assert out["live"] is False and "reason" in out
     assert pb.positions()[0].upnl != 0.0  # historical mark actually happened
 
@@ -251,7 +255,7 @@ def test_mark_live_never_raises_even_when_fallback_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(httpx, "get", _no_network)
     _store()  # chains exist, but not for this ticker
     pb = _broker_with_position(tmp_path, ticker="ZZZZ")
-    out = pb.mark_live(AlphaVantage(key=""), store=ChainStore())  # must not raise
+    out = pb.mark_live(AlphaVantage(key=""), store=ChainStore(), when=_OPEN_TS)  # must not raise
     assert out["live"] is False
     assert "fallback failed" in out["reason"]
 
@@ -399,6 +403,10 @@ def test_api_paper_endpoints_contract_shapes_no_key(tmp_path, monkeypatch):
 
 
 def test_api_paper_mark_goes_live_when_key_configured(tmp_path, monkeypatch):
+    # the API route uses the real clock; force "market open" so the test
+    # doesn't depend on the day/hour the suite runs
+    import optdesk.live.market_hours as mh
+    monkeypatch.setattr(mh, "market_open", lambda now=None: True)
     client = _client(tmp_path, monkeypatch, AlphaVantage(key="k"))
     _open_via_api(client)
 
@@ -442,3 +450,56 @@ def test_api_paper_positions_realized_tracks_closed_pnl(tmp_path, monkeypatch):
     body = client.get("/api/paper/positions").json()
     assert body["equity"]["realized"] == pytest.approx(closed_upnl, abs=0.01)
     assert body["equity"]["upnl"] == pytest.approx(0.0), "no open positions remain"
+
+
+# --------------------------------------------------------------------------- #
+# Market-hours gate
+# --------------------------------------------------------------------------- #
+def test_market_open_regular_hours_and_weekend():
+    from datetime import datetime
+    from optdesk.live.market_hours import market_open
+    # July (EDT, UTC-4): Wed 2026-07-01
+    assert market_open(datetime(2026, 7, 1, 13, 30)) is True    # 09:30 ET open
+    assert market_open(datetime(2026, 7, 1, 13, 29)) is False   # 09:29 ET
+    assert market_open(datetime(2026, 7, 1, 19, 59)) is True    # 15:59 ET
+    assert market_open(datetime(2026, 7, 1, 20, 0)) is False    # 16:00 ET close
+    # weekend — Sat 2026-07-04 mid-day ET
+    assert market_open(datetime(2026, 7, 4, 17, 0)) is False
+    # January (EST, UTC-5): Wed 2026-01-07 14:30 UTC = 09:30 ET
+    assert market_open(datetime(2026, 1, 7, 14, 30)) is True
+    assert market_open(datetime(2026, 1, 7, 14, 29)) is False
+
+
+def test_mark_live_skips_av_when_market_closed(tmp_path, monkeypatch):
+    """Off-hours: no AV request at all, EOD fallback with an honest reason."""
+    calls = []
+
+    def _boom(*a, **k):  # any AV HTTP call is a bug off-hours
+        calls.append(a)
+        raise AssertionError("AV was called while the market is closed")
+
+    monkeypatch.setattr(httpx, "get", _boom)
+    pb, store = _open_real_position(tmp_path)
+    out = pb.mark_live(AlphaVantage(key="k"), store=store,
+                       when=_dt(2026, 7, 4, 17, 0))  # Saturday
+    assert out["live"] is False
+    assert "market closed" in out["reason"]
+    assert calls == []
+
+
+def test_trade_cycle_paused_when_market_closed(tmp_path):
+    """Pilot must not mark/open/close outside RTH (Saturday tick)."""
+    from datetime import datetime
+    from tests.test_autopilot import FakeBroker, make_pilot
+
+    broker = FakeBroker()
+    pilot = make_pilot(tmp_path, broker)
+    pilot._state["enabled"] = True
+    pilot._state["promoted"] = [{
+        "id": "x", "strategy": "bull_put_spread", "tickers": ["AAA"],
+        "params": {}, "holdout_score": 1.0, "holdout_return": 0.05,
+        "promoted_at": "2026-07-01T00:00:00", "realized_pnl": 0.0,
+        "closed_trades": 0, "consecutive_losses": 0, "active": True,
+    }]
+    pilot.run_trade_cycle(datetime(2026, 7, 4, 17, 0))  # Saturday
+    assert broker.opened_specs == [] and broker.closed_idx == []

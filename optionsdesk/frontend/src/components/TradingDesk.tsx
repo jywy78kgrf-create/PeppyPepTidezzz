@@ -226,7 +226,7 @@ function PositionCard({
       animate={{ opacity: closing ? 0.35 : 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.25 } }}
       transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-      className="flex flex-col gap-1.5 rounded-xl border p-2.5"
+      className="flex flex-col gap-1 rounded-xl border p-2"
       style={{
         borderColor: `color-mix(in srgb, ${color} 22%, var(--color-edge-soft))`,
         background: 'color-mix(in srgb, var(--color-panel-2) 55%, transparent)',
@@ -577,8 +577,9 @@ export default function TradingDesk({ className }: { className?: string }) {
           />
         </div>
 
-        {/* main: equity curve + greeks | ledger rail */}
-        <div className="flex min-h-0 flex-[4] gap-2.5">
+        {/* equity curve + greeks | ledger rail — compact fixed-height band so
+            the open-positions grid below gets everything that's left */}
+        <div className="flex h-[185px] shrink-0 gap-2.5">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
             <div className="min-h-0 flex-1">
               {history.length >= 2 ? (
@@ -676,8 +677,8 @@ export default function TradingDesk({ className }: { className?: string }) {
           </div>
         </div>
 
-        {/* open positions — the desk's centerpiece, gets the bigger share */}
-        <div className="flex min-h-0 flex-[5] flex-col">
+        {/* open positions — the desk's centerpiece: takes ALL remaining space */}
+        <div className="flex min-h-0 flex-1 flex-col">
           <div className="mb-1.5 flex shrink-0 items-baseline justify-between">
             <span className="panel-title">
               Open Positions
@@ -693,7 +694,7 @@ export default function TradingDesk({ className }: { className?: string }) {
             {open.length ? (
               <div
                 className="grid gap-2"
-                style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))' }}
+                style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(215px, 1fr))' }}
               >
                 <AnimatePresence mode="popLayout">
                   {open.map(({ p, i }) => (

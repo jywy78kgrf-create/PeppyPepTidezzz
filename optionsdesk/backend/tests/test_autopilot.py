@@ -208,8 +208,9 @@ def test_exit_close_dte(tmp_path):
     pilot.enable()
     pilot.run_research_batch()
     pilot.run_trade_cycle()
-    # jump time past close_by (expiry 2026-07-17, close_dte 7 -> 07-10)
-    pilot.now_fn = lambda: datetime(2026, 7, 11, 14, 0, 0)
+    # jump past close_by (expiry 2026-07-17, close_dte 7 -> 07-10) to the
+    # next MONDAY 10:00 ET — trade cycles are market-hours gated
+    pilot.now_fn = lambda: datetime(2026, 7, 13, 14, 0, 0)
     pilot.run_trade_cycle()
     assert broker.positions()[0].status == "CLOSED"
 

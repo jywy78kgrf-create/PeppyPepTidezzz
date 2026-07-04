@@ -499,6 +499,23 @@ class AutoPilot:
     # ------------------------------------------------------------------ #
     def run_trade_cycle(self, now: Optional[datetime] = None) -> None:
         now = now or self.now_fn()
+
+        # No paper trading outside regular market hours: quotes are stale,
+        # fills would be fiction, and ledger rows would carry weekend/night
+        # timestamps. Research is unaffected (offline compute). Log only on
+        # the open->closed transition so the feed isn't spammed all night.
+        from ..live.market_hours import market_open
+        if not market_open(now):
+            with self._lock:
+                if getattr(self, "_market_was_open", True):
+                    self._market_was_open = False
+                    self._log("research", "market closed — paper trading "
+                                          "paused (research continues)")
+                    self._save()
+                self._state["last_trade_cycle"] = now.isoformat()
+            return
+        self._market_was_open = True
+
         broker = self._broker_factory()
 
         # 1) mark the book (live when AV resolves, EOD otherwise) — network

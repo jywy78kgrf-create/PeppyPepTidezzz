@@ -38,7 +38,7 @@ export default function App() {
             (~2/3 height), the learning loop full-width below. Suggestions
             and manual backtest were retired once the autopilot took over
             research — the desk IS the product now. */}
-        <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-12 lg:grid-rows-[minmax(0,13fr)_minmax(0,6fr)]">
+        <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-12 lg:grid-rows-[minmax(0,4fr)_minmax(0,1fr)]">
           <ErrorBoundary label="Trading Desk">
             <TradingDesk className="lg:col-span-9" />
           </ErrorBoundary>

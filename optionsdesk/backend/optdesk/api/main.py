@@ -624,8 +624,12 @@ def live_tape(symbols: str | None = Query(None, description="CSV; defaults to fi
     if not syms:
         return {"quotes": [], "live": False, "asof": _dtm.datetime.utcnow().isoformat()}
 
+    # Off-hours the "realtime" feed is just Friday's close wearing a LIVE
+    # badge — skip the AV call entirely and serve honest EOD closes.
+    from ..live.market_hours import market_open
+
     av = _alpha_vantage()
-    if av.configured:
+    if av.configured and market_open():
         res = bulk_quotes(av, syms)
         if res.get("quotes"):
             return {"quotes": res["quotes"], "live": True,
