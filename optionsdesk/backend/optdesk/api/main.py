@@ -421,7 +421,8 @@ def paper_history() -> dict:
     """Equity history. Served from the permanent SQLite ledger when it has
     data (survives state-file rollover); falls back to the JSON state."""
     pb = _paper()
-    points = pb.ledger.equity_series()
+    # filter to the current account epoch so a reset starts a clean curve
+    points = pb.ledger.equity_series(since=pb.epoch)
     if not points:
         points = pb.history()
     return serialize({"points": points})

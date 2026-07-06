@@ -272,3 +272,27 @@ def test_pilot_reset_keeps_promoted(tmp_path):
     assert pilot._state["managed"] == {}               # cleared
     assert pilot._state["day_anchor"] is None          # cleared
     assert pilot._state["breaker"]["tripped"] is False  # un-tripped
+
+
+def test_reset_clears_equity_curve_and_daypnl(tmp_path):
+    """The desk's equity history reads the append-only ledger; after a reset
+    it must start a clean curve (epoch-filtered), or a stale DAY P&L / old
+    drawdown lingers even though the book is flat."""
+    from optdesk.journal import get_ledger
+
+    led = get_ledger(tmp_path / "ledger.db")
+    # pre-reset marks (the phantom drawdown)
+    led.record_mark("2026-07-06T14:00:00+00:00", 104_933.0, 104_933.0, 0.0, 0, True)
+    led.record_mark("2026-07-06T15:00:00+00:00", 100_067.0, 100_067.0, 0.0, 0, True)
+
+    pb = PaperBroker(state_dir=tmp_path, starting_cash=100_000.0)
+    assert len(pb.ledger.equity_series()) == 2          # full audit trail intact
+
+    pb.reset()
+    # after reset, marks arrive fresh
+    pb.ledger.record_mark(pb.epoch, 100_000.0, 100_000.0, 0.0, 0, False)
+
+    curve = pb.ledger.equity_series(since=pb.epoch)
+    assert len(curve) == 1 and curve[0]["equity"] == 100_000.0
+    # audit trail still has everything (nothing deleted)
+    assert len(pb.ledger.equity_series()) == 3

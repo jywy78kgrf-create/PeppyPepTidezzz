@@ -158,10 +158,13 @@ class Ledger:
     # ------------------------------------------------------------------ #
     # Readers
     # ------------------------------------------------------------------ #
-    def equity_series(self, limit: int = 100_000) -> list[dict]:
+    def equity_series(self, limit: int = 100_000,
+                      since: Optional[str] = None) -> list[dict]:
+        where = "WHERE ts >= ?" if since else ""
+        params: tuple = (since, int(limit)) if since else (int(limit),)
         rows = self._query(
-            "SELECT ts, equity, cash, upnl, live FROM marks "
-            "ORDER BY ts DESC LIMIT ?", (int(limit),))
+            f"SELECT ts, equity, cash, upnl, live FROM marks {where} "
+            "ORDER BY ts DESC LIMIT ?", params)
         return [{"ts": r[0], "equity": r[1], "cash": r[2], "upnl": r[3],
                  "live": bool(r[4])} for r in reversed(rows)]
 
