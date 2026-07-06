@@ -171,7 +171,72 @@ def _normalize_contract(raw: Any, symbol: str) -> Optional[dict[str, Any]]:
         "ask": _to_float(raw.get("ask")),
         "last": _to_float(raw.get("last")),
         "mark": _to_float(raw.get("mark")),
+        # greeks & IV (present when require_greeks=true) — needed to build a
+        # live OptionQuote chain the strategy builders can select strikes from
+        "volume": _to_int(raw.get("volume")),
+        "open_interest": _to_int(raw.get("open_interest")),
+        "iv": _to_float(raw.get("implied_volatility")),
+        "delta": _to_float(raw.get("delta")),
+        "gamma": _to_float(raw.get("gamma")),
+        "theta": _to_float(raw.get("theta")),
+        "vega": _to_float(raw.get("vega")),
+        "rho": _to_float(raw.get("rho")),
     }
+
+
+def live_chain(av: "AlphaVantage", symbol: str,
+               asof: Optional[_dt.date] = None) -> list:
+    """Build a live ``list[OptionQuote]`` for ``symbol`` from Alpha Vantage.
+
+    This is the SAME price source the paper book marks against, so a position
+    opened from this chain and then marked live shows only real post-entry
+    P&L — never the vintage gap you'd get opening from a stale historical
+    chain and marking live.
+
+    Returns ``[]`` on any error (no key, rate limit, empty chain, no
+    underlying quote). Callers MUST treat ``[]`` as "do not open" — opening on
+    anything other than this live chain reintroduces the marking mismatch.
+    """
+    from ..contracts import OptionQuote, OptionType
+
+    rows = av.realtime_options(symbol)
+    if not rows or (isinstance(rows[0], dict) and "error" in rows[0]):
+        return []
+    q = av.quote(symbol)
+    underlying = float(q.get("price") or 0.0) if isinstance(q, dict) else 0.0
+    if underlying <= 0:
+        return []  # no trustworthy underlying -> can't size or select strikes
+
+    asof = asof or _dt.datetime.now(_dt.timezone.utc).date()
+    out: list = []
+    for r in rows:
+        try:
+            expiry = _dt.date.fromisoformat(str(r["expiry"]))
+            strike = float(r["strike"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if strike <= 0 or expiry <= asof:
+            continue  # expired/same-day contracts are unusable
+        out.append(OptionQuote(
+            ticker=symbol.upper(),
+            asof=asof,
+            expiry=expiry,
+            strike=strike,
+            kind=OptionType.CALL if r["option_type"] == "C" else OptionType.PUT,
+            bid=_to_float(r.get("bid")),
+            ask=_to_float(r.get("ask")),
+            last=_to_float(r.get("last")),
+            volume=_to_int(r.get("volume")),
+            open_interest=_to_int(r.get("open_interest")),
+            iv=_to_float(r.get("iv")),
+            delta=_to_float(r.get("delta")),
+            gamma=_to_float(r.get("gamma")),
+            theta=_to_float(r.get("theta")),
+            vega=_to_float(r.get("vega")),
+            rho=_to_float(r.get("rho")),
+            underlying=underlying,
+        ))
+    return out
 
 
 def _to_float(v: Optional[Any]) -> float:

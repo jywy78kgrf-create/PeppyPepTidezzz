@@ -132,6 +132,21 @@ Each one biases results in a known direction; read this before trusting a number
   the paper book marks from realtime option quotes (LIVE pill); otherwise from
   the latest end-of-day chain (EOD pill). A live mark says what the book is
   worth, not what you could necessarily execute at.
+- **The autopilot OPENS from the same live chain it MARKS against.** Positions
+  are constructed and priced from a live Alpha Vantage option chain (strikes
+  selected on current greeks, filled at the live spread), then marked from
+  that same live source. If a live chain can't be fetched, the autopilot opens
+  nothing — it never opens on a stale historical chain while marking live,
+  which would manufacture a phantom P&L from the price-vintage gap the instant
+  a position opened. (Research/backtests still use the historical store — that
+  is correct; only forward paper opens require live pricing.) The slow equity
+  gates — SMA50 trend, rv20 regime — still read the historical store; their
+  few-days staleness is immaterial to those coarse filters.
+- **Account reset.** Starting a fresh forward test flattens the book, restores
+  cash, and clears the equity curve and the desk's trade views (filtered to a
+  new epoch); the append-only ledger is preserved for audit and gets a reset
+  event. Promoted strategies are kept — they were validated on holdout data
+  and remain valid.
 - **Market-hours aware (RTH, no holiday calendar).** Outside Mon-Fri
   09:30-16:00 ET the desk makes NO Alpha Vantage calls (tape and marks serve
   EOD data, labeled as such) and the autopilot's trade cycle is paused — no

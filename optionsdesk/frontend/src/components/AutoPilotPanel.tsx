@@ -7,6 +7,7 @@ import {
   getAutoStatus,
   postAutoDisable,
   postAutoEnable,
+  postAutoReset,
 } from '../api'
 import type { AutoActivityEvent, AutoStatus } from '../types'
 import Panel from './Panel'
@@ -28,6 +29,7 @@ export default function AutoPilotPanel({ className }: { className?: string }) {
   const [status, setStatus] = useState<AutoStatus | null>(null)
   const [events, setEvents] = useState<AutoActivityEvent[]>([])
   const [busy, setBusy] = useState(false)
+  const [confirmReset, setConfirmReset] = useState(false)
   // strict data layer: keep last real state on failure, say so — never mock
   const [err, setErr] = useState<string | null>(null)
 
@@ -68,6 +70,21 @@ export default function AutoPilotPanel({ className }: { className?: string }) {
           ? 'KILL did not reach the backend — the autopilot is still running. Retry.'
           : 'ENGAGE did not reach the backend. Retry.',
       )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const doReset = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await postAutoReset()
+      setErr(null)
+      setConfirmReset(false)
+      refresh()
+    } catch {
+      setErr('reset did not reach the backend — nothing was changed. Retry.')
     } finally {
       setBusy(false)
     }
@@ -171,8 +188,41 @@ export default function AutoPilotPanel({ className }: { className?: string }) {
 
         {/* activity feed */}
         <div className="min-h-0 flex-1">
-          <div className="mb-1 text-[8.5px] tracking-[0.14em] text-[var(--color-ink-faint)]">
-            ACTIVITY
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-[8.5px] tracking-[0.14em] text-[var(--color-ink-faint)]">
+              ACTIVITY
+            </span>
+            {/* two-step reset: start a fresh forward test (keeps promoted) */}
+            {confirmReset ? (
+              <span className="flex items-center gap-1">
+                <span className="text-[8.5px] text-[var(--color-amber)]">reset book?</span>
+                <button
+                  onClick={doReset}
+                  disabled={busy}
+                  className="rounded px-1.5 py-0.5 text-[8.5px] font-semibold"
+                  style={{
+                    color: 'var(--color-down)',
+                    border: '1px solid color-mix(in srgb, var(--color-down) 45%, transparent)',
+                  }}
+                >
+                  yes, reset
+                </button>
+                <button
+                  onClick={() => setConfirmReset(false)}
+                  className="text-[8.5px] text-[var(--color-ink-faint)]"
+                >
+                  cancel
+                </button>
+              </span>
+            ) : (
+              <button
+                onClick={() => setConfirmReset(true)}
+                className="text-[8.5px] text-[var(--color-ink-faint)] hover:text-[var(--color-ink-dim)]"
+                title="Start a fresh forward test: flat book, cash back to start, promoted strategies kept"
+              >
+                ⟳ reset book
+              </button>
+            )}
           </div>
           <div className="max-h-full space-y-0.5 overflow-y-auto">
             {events.map((e, i) => (

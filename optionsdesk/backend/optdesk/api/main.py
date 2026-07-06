@@ -438,7 +438,11 @@ def ledger_stats() -> dict:
 @app.get("/api/ledger/trades")
 def ledger_trades(limit: int = Query(500, ge=1, le=10000),
                   closed_only: bool = Query(False)) -> dict:
-    return serialize({"trades": _paper().ledger.trades(limit, closed_only=closed_only)})
+    pb = _paper()
+    # show only trades from the current account epoch (post-reset), so a fresh
+    # start isn't polluted by a prior run's history
+    return serialize({"trades": pb.ledger.trades(limit, closed_only=closed_only,
+                                                  since=pb.epoch)})
 
 
 @app.get("/api/ledger/events")
@@ -595,6 +599,23 @@ def auto_research() -> dict:
     sweep progress across the whole strategy x universe rotation."""
     from ..auto import get_pilot
     return serialize(get_pilot().research_status())
+
+
+@app.post("/api/auto/reset")
+def auto_reset(resume: bool = Query(True)) -> dict:
+    """Start the forward test fresh: flat paper book, cash restored, equity
+    curve and trade views cleared (the append-only ledger is preserved for
+    audit). Promoted strategies and research progress are KEPT. When
+    ``resume`` (default) the autopilot is re-engaged so it trades the fresh
+    account on the next market session."""
+    from ..auto import get_pilot
+
+    pb = _paper()
+    equity = pb.reset()
+    pilot = get_pilot()
+    pilot.reset_trading_state()
+    status = pilot.enable() if resume else pilot.status()
+    return serialize({"ok": True, "equity": equity, "auto": status})
 
 
 # --------------------------------------------------------------------------- #

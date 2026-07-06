@@ -97,6 +97,10 @@ class PaperBroker:
         self._cash = starting_cash
         self._positions: list[PaperPosition] = []
         self._history: list[dict] = []
+        # ISO timestamp of the last account reset; the desk shows only ledger
+        # trades opened at/after it, so a fresh start isn't polluted by prior
+        # runs (the append-only ledger itself is never deleted).
+        self._epoch: Optional[str] = None
         self._load()
 
     # ------------------------------------------------------------------ #
@@ -119,9 +123,34 @@ class PaperBroker:
         self._cash = cash
         self._starting_cash = starting
         self._positions = positions
+        self._epoch = data.get("epoch")
         # history is additive state: a missing or corrupt field must never
         # invalidate an otherwise-good (pre-history) paper.json.
         self._history = self._history_from(data)
+
+    @property
+    def epoch(self) -> Optional[str]:
+        """ISO timestamp of the last reset, or None. Ledger reads filter to it."""
+        return self._epoch
+
+    def reset(self, starting_cash: Optional[float] = None) -> dict:
+        """Start a fresh forward test: flat book, cash restored, equity curve
+        cleared. Sets a new epoch so the desk's ledger views show only trades
+        from here on; the append-only ledger itself is preserved for audit and
+        gets a 'reset' event. Returns the new equity snapshot."""
+        cash = float(starting_cash if starting_cash is not None else self._starting_cash)
+        self._starting_cash = cash
+        self._cash = cash
+        self._positions = []
+        self._history = []
+        self._epoch = datetime.now(timezone.utc).isoformat()
+        self._save()
+        try:  # audit breadcrumb; never fatal
+            self.ledger.record_event(self._epoch, "reset",
+                                     f"account reset to {cash:,.0f}")
+        except Exception:  # noqa: BLE001
+            pass
+        return self.equity()
 
     def _backup_corrupt(self) -> None:
         """Move an unreadable state file aside as ``paper.json.corrupt-<ts>``."""
@@ -136,6 +165,7 @@ class PaperBroker:
         data = {
             "cash": round(self._cash, 4),
             "starting_cash": round(self._starting_cash, 4),
+            "epoch": self._epoch,
             "positions": [self._pos_to_dict(p) for p in self._positions],
             "history": self._history,
         }

@@ -117,6 +117,7 @@ class AutoPilot:
         broker_factory: Optional[Callable] = None,
         av_factory: Optional[Callable] = None,
         learn_fn: Optional[Callable] = None,
+        live_chain_fn: Optional[Callable] = None,
         now_fn: Callable[[], datetime] = datetime.utcnow,
     ) -> None:
         self.settings = settings
@@ -133,6 +134,8 @@ class AutoPilot:
         self._broker_factory = broker_factory or self._default_broker_factory
         self._av_factory = av_factory or self._default_av_factory
         self._learn_fn = learn_fn  # (strategy, tickers, start, end) -> result dict
+        self._live_chain_fn = live_chain_fn  # (ticker) -> list[OptionQuote]
+        self._market_was_open = True  # for the "market closed" transition log
         self._state = self._load()
         # earnings calendar cache: (fetch_date, {SYMBOL: [iso dates]} | None)
         self._earnings_cache: tuple[Optional[date], Optional[dict]] = (None, None)
@@ -157,6 +160,36 @@ class AutoPilot:
         if self._store is None:
             self._store = ChainStore()
         return self._store
+
+    def reset_trading_state(self) -> None:
+        """Clear per-position trading state for a fresh forward test: managed
+        positions, day anchor, cooldowns, and any tripped breaker. KEEPS the
+        promoted configs and research progress — the strategies were validated
+        on holdout data and remain valid; only the (phantom) trade history is
+        wiped."""
+        with self._lock:
+            self._state["managed"] = {}
+            self._state["day_anchor"] = None
+            self._state["last_opened"] = {}
+            self._state["breaker"] = {"tripped": False, "reason": None, "at": None}
+            self._market_was_open = True
+            self._log("enable", "account reset — book cleared, promoted kept")
+            self._save()
+
+    def _fetch_live_chain(self, ticker: str) -> list:
+        """A LIVE option chain for opening — the same source marks use, so an
+        opened position never shows a stale-vs-live vintage gap. Returns [] on
+        any failure; callers must treat [] as 'do not open'."""
+        if self._live_chain_fn is not None:
+            try:
+                return list(self._live_chain_fn(ticker) or [])
+            except Exception:  # noqa: BLE001
+                return []
+        try:
+            from ..live.alpha_vantage import live_chain
+            return list(live_chain(self._av_factory(), ticker) or [])
+        except Exception:  # noqa: BLE001 - a bad fetch must never crash a cycle
+            return []
 
     def _learn(self, strategy: str, tickers: list[str], start: date, end: date,
                on_iter: Optional[Callable] = None) -> dict:
@@ -625,18 +658,24 @@ class AutoPilot:
                 if tku in held or self._on_cooldown(tku, now):
                     continue
                 try:
-                    dates = self.store.trading_dates(tku)
-                    if not dates:
-                        continue
-                    asof = dates[-1]
-                    chain = self.store.chain(tku, asof)
+                    # LIVE chain — same price source the book marks against.
+                    # Empty => we could not price it live => DO NOT open. This
+                    # is the fix for the open-stale/mark-live phantom P&L.
+                    chain = self._fetch_live_chain(tku)
                     if not chain:
                         continue
-                    if gate is not None and not gate.allow(tku, asof, config["strategy"]):
-                        continue
-                    if not self._vrp_ok(chain, tku, asof, config["strategy"]):
-                        continue
                     underlying = next((q.underlying for q in chain if q.underlying > 0), 0.0)
+                    if underlying <= 0:
+                        continue
+                    # Slow equity-trend / vol-regime gates read the historical
+                    # store; a few days' staleness is immaterial for these
+                    # coarse filters. VRP's IV comes from the LIVE chain.
+                    dates = self.store.trading_dates(tku)
+                    ind_asof = dates[-1] if dates else chain[0].asof
+                    if gate is not None and not gate.allow(tku, ind_asof, config["strategy"]):
+                        continue
+                    if not self._vrp_ok(chain, tku, ind_asof, config["strategy"]):
+                        continue
                     spec = builder(chain, underlying, dict(config.get("params") or {}))
                     if spec is None:
                         continue

@@ -99,13 +99,18 @@ def bad_learn(strategy, tickers, start, end):
 
 def make_pilot(tmp_path: Path, broker: FakeBroker, learn=good_learn,
                cfg: AutoConfig | None = None) -> AutoPilot:
+    store = FakeStore()
+    # opens now come from a LIVE chain provider (not the historical store);
+    # the fake feeds the store's own chain through that seam so the trade
+    # cycle behaves as before without any real Alpha Vantage traffic.
     return AutoPilot(
-        store=FakeStore(),
+        store=store,
         config=cfg or AutoConfig(research_interval_hr=0, trade_interval_min=0),
         state_path=tmp_path / "auto.json",
         broker_factory=lambda: broker,
         av_factory=lambda: None,
         learn_fn=learn,
+        live_chain_fn=lambda tk: store.chain(tk, store.trading_dates(tk)[-1]),
         now_fn=lambda: datetime(2026, 7, 1, 14, 0, 0),
     )
 

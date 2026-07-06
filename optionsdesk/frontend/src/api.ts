@@ -328,6 +328,16 @@ export function postAutoDisable(): Promise<AutoStatus> {
   )
 }
 
+/** POST /api/auto/reset — fresh forward test: flat book, cash restored,
+ *  promoted strategies kept. Strict (real or error), like the kill switch. */
+export function postAutoReset(): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    '/api/auto/reset',
+    { method: 'POST', body: '{}' },
+    TIMEOUT_PAPER,
+  )
+}
+
 export function getAutoActivity(limit = 30): Promise<{ events: AutoActivityEvent[] }> {
   return request<{ events: AutoActivityEvent[] }>(
     `/api/auto/activity?limit=${limit}`,

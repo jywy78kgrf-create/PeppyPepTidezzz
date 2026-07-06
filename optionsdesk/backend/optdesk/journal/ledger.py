@@ -165,12 +165,21 @@ class Ledger:
         return [{"ts": r[0], "equity": r[1], "cash": r[2], "upnl": r[3],
                  "live": bool(r[4])} for r in reversed(rows)]
 
-    def trades(self, limit: int = 1000, closed_only: bool = False) -> list[dict]:
-        where = "WHERE closed IS NOT NULL" if closed_only else ""
+    def trades(self, limit: int = 1000, closed_only: bool = False,
+               since: Optional[str] = None) -> list[dict]:
+        clauses = []
+        params: list = []
+        if closed_only:
+            clauses.append("closed IS NOT NULL")
+        if since:
+            clauses.append("opened >= ?")
+            params.append(since)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(int(limit))
         rows = self._query(
             f"SELECT ticker, opened, strategy, config_id, qty, cost_basis, "
             f"legs, closed, close_value, pnl, close_reason FROM trades {where} "
-            f"ORDER BY opened DESC LIMIT ?", (int(limit),))
+            f"ORDER BY opened DESC LIMIT ?", tuple(params))
         out = []
         for r in rows:
             try:
