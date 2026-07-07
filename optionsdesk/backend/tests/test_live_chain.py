@@ -296,3 +296,29 @@ def test_reset_clears_equity_curve_and_daypnl(tmp_path):
     assert len(curve) == 1 and curve[0]["equity"] == 100_000.0
     # audit trail still has everything (nothing deleted)
     assert len(pb.ledger.equity_series()) == 3
+
+
+def test_greeks_endpoint_uses_live_chain(tmp_path, monkeypatch):
+    """Greeks must be computed from the live chain (same source as opens/marks)
+    or every live-opened leg shows 'unmatched' and the strip reads 0."""
+    from fastapi.testclient import TestClient
+    from optdesk.api import main
+    from optdesk.strategies.library import STRATEGIES
+    import optdesk.live.market_hours as mh
+
+    monkeypatch.setattr(httpx, "get", _router())
+    av = AlphaVantage(key="k")
+    chain = live_chain(av, "SPY", asof=_ASOF)
+    pb = PaperBroker(state_dir=tmp_path, starting_cash=100_000.0)
+    pb.open(STRATEGIES["long_call"](chain, _UNDERLYING, {}), chain, qty=2)
+
+    monkeypatch.setattr(main, "_paper",
+                        lambda: PaperBroker(state_dir=tmp_path, starting_cash=100_000.0))
+    monkeypatch.setattr(main, "_alpha_vantage", lambda: av)
+    monkeypatch.setattr(mh, "market_open", lambda now=None: True)
+    client = TestClient(main.app)
+
+    g = client.get("/api/paper/greeks").json()
+    assert g["unmatched_legs"] == 0, "live-opened legs must match the live greeks chain"
+    assert abs(g["totals"]["delta"]) > 0.0, "a long call must carry non-zero delta"
+    assert g["totals"]["theta"] != 0.0, "a long option must carry theta"

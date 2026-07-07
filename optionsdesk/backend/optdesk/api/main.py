@@ -511,21 +511,45 @@ def paper_greeks() -> dict:
     position-by-position."""
     from datetime import date as _date
 
+    from ..live.market_hours import market_open
+
     pb = _paper()
     s = store()
     totals = {"delta": 0.0, "gamma": 0.0, "theta": 0.0, "vega": 0.0}
     by_ticker: dict[str, dict] = {}
     unmatched = 0
 
+    # positions are opened/marked from LIVE chains, so greeks must come from the
+    # same source or every leg is "unmatched" against the historical store.
+    # Live during market hours; store fallback otherwise. One fetch per ticker.
+    use_live = market_open()
+    av = _alpha_vantage() if use_live else None
+    chain_cache: dict[str, list] = {}
+
+    def _chain_for(tk: str) -> list:
+        if tk in chain_cache:
+            return chain_cache[tk]
+        chain: list = []
+        if use_live and av is not None and getattr(av, "configured", False):
+            try:
+                from ..live.alpha_vantage import live_chain
+                chain = live_chain(av, tk)
+            except Exception:  # noqa: BLE001 - greeks must never crash the API
+                chain = []
+        if not chain:  # off-hours / no key / AV hiccup -> latest stored chain
+            try:
+                dates = s.trading_dates(tk)
+                chain = s.chain(tk, dates[-1]) if dates else []
+            except FileNotFoundError:
+                chain = []
+        chain_cache[tk] = chain
+        return chain
+
     for pos in pb.positions():
         if pos.status != "OPEN":
             continue
         tk = pos.ticker.upper()
-        try:
-            dates = s.trading_dates(tk)
-            chain = s.chain(tk, dates[-1]) if dates else []
-        except FileNotFoundError:
-            chain = []
+        chain = _chain_for(tk)
         lookup = {(q.kind.value, round(q.strike, 4), q.expiry.isoformat()): q
                   for q in chain}
         row = by_ticker.setdefault(tk, {"delta": 0.0, "gamma": 0.0,
