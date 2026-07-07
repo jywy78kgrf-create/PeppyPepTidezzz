@@ -70,12 +70,16 @@ def _leg_commission(leg: Leg, cost: CostModel) -> float:
 
 
 def _match_quote(chain: list[OptionQuote], leg: Leg) -> Optional[OptionQuote]:
-    """Find the quote matching a leg's strike/expiry/kind (nearest strike)."""
+    """Find the quote matching a leg's kind + EXPIRY (nearest strike within it).
+
+    Never matches across expiries: a live-opened Aug leg has no business being
+    priced off a June contract of the same strike — that mismatch produced
+    impossible (negative) long-option marks. No same-expiry quote -> None, and
+    the caller holds the position at its last mark.
+    """
     candidates = [
         q for q in chain if q.kind == leg.kind and q.expiry == leg.expiry
     ]
-    if not candidates:
-        candidates = [q for q in chain if q.kind == leg.kind]
     if not candidates:
         return None
     return min(candidates, key=lambda q: abs(q.strike - leg.strike))
@@ -101,6 +105,9 @@ class PaperBroker:
         # trades opened at/after it, so a fresh start isn't polluted by prior
         # runs (the append-only ledger itself is never deleted).
         self._epoch: Optional[str] = None
+        # in-memory: last time we pulled AV quotes to mark (throttles off-hours
+        # marking so we don't poll AV all night — EOD prices don't change).
+        self._last_av_mark: Optional[datetime] = None
         self._load()
 
     # ------------------------------------------------------------------ #
@@ -306,6 +313,11 @@ class PaperBroker:
                 continue
             chain = self._chain_for(source, pos)
             value = self._liquidation_value(pos, chain)
+            if value is None:
+                # the store can't price every leg (e.g. a live-opened position
+                # whose expiry isn't in the store) — HOLD the last mark rather
+                # than fabricate one.
+                continue
             pos.current_value = round(value, 4)
             pos.upnl = round(value - pos.cost_basis, 4)
         self._save()
@@ -321,22 +333,36 @@ class PaperBroker:
         ``live=True`` snapshot and returns ``{"live": True, "marked": n}``
         where ``n`` counts open positions with every leg matched live.
 
-        Outside regular US market hours no AV call is made at all — quotes
-        would be stale and every call wasted — and the EOD fallback is used
-        (``when`` overrides the clock; None means now).
+        Marks come from AV realtime quotes both during AND after market hours:
+        off-hours the endpoint returns the last session's CLOSING option prices,
+        which is the correct EOD mark for positions opened from a live chain
+        (the historical store lacks their contracts entirely). Marks are labeled
+        ``live=True`` only during regular hours, ``live=False`` (EOD) otherwise.
+        Off-hours marking is throttled to every 15 min (prices are static) so we
+        don't poll AV all night. ``when`` overrides the clock for tests.
 
         On any AV error (no key / premium note / rate limit / transport) it
-        falls back to the latest historical chain via ``store`` (a fresh
-        ChainStore when omitted) and returns ``{"live": False, "reason": ...}``.
+        falls back to the latest historical chain via ``store`` — which now only
+        re-prices positions whose exact contracts it holds, never mis-matching a
+        different expiry (that produced impossible negative long-option marks).
         This method NEVER raises — it sits directly on the API path.
         """
         try:
             from ..live.market_hours import market_open
-            if not market_open(when):
-                return self._mark_fallback(store, "market closed (EOD marks)")
+            live_now = bool(market_open(when))
             open_pos = [p for p in self._positions if p.status == "OPEN"]
+            if not open_pos:
+                self.snapshot(live=live_now)
+                return {"live": live_now, "marked": 0}
             if not getattr(av, "configured", False):
                 return self._mark_fallback(store, "alpha_vantage_key not configured")
+            # off-hours throttle: EOD prices don't move, so refresh at most every
+            # 15 min; between refreshes hold the last mark (no overnight polling).
+            now_ts = datetime.now(timezone.utc)
+            if not live_now and self._last_av_mark is not None and (
+                    now_ts - self._last_av_mark).total_seconds() < 900:
+                self.snapshot(live=False)
+                return {"live": False, "marked": 0, "reason": "holding EOD mark"}
             chains: dict[str, list[dict]] = {}
             for tk in sorted({p.ticker.upper() for p in open_pos}):
                 rows = av.realtime_options(tk)
@@ -354,9 +380,10 @@ class PaperBroker:
                 pos.upnl = round(value - pos.cost_basis, 4)
                 if all_matched:
                     marked += 1
+            self._last_av_mark = now_ts
             self._save()
-            self.snapshot(live=True)
-            return {"live": True, "marked": marked}
+            self.snapshot(live=live_now)
+            return {"live": live_now, "marked": marked}
         except Exception as exc:  # noqa: BLE001 - marking must never crash the API
             return self._mark_fallback(store, f"live marking failed: {exc}")
 
@@ -483,8 +510,14 @@ class PaperBroker:
     # ------------------------------------------------------------------ #
     # Marking internals
     # ------------------------------------------------------------------ #
-    def _liquidation_value(self, pos: PaperPosition, chain: list[OptionQuote]) -> float:
-        """What we'd net by closing now (exit fills cross the spread again)."""
+    def _liquidation_value(self, pos: PaperPosition, chain: list[OptionQuote]) -> Optional[float]:
+        """What we'd net by closing now (exit fills cross the spread again).
+
+        Returns None if ANY leg has no same-expiry quote in ``chain`` — the
+        position can't be honestly priced from this source, so the caller holds
+        its last mark instead of fabricating a value from partial/mismatched
+        quotes.
+        """
         value = 0.0
         commission = 0.0
         for ls in pos.legs:
@@ -497,12 +530,7 @@ class PaperBroker:
             )
             q = _match_quote(chain, leg)
             if q is None:
-                # No quote: assume held at open price (zero mark-to-market change).
-                value += (
-                    (-1.0 if leg.action == Action.SELL else 1.0)
-                    * float(ls["open_price"]) * abs(leg.quantity) * CONTRACT_MULT
-                )
-                continue
+                return None  # can't price this leg -> caller holds last mark
             # Closing reverses the open action.
             close_action = Action.SELL if leg.action == Action.BUY else Action.BUY
             price = _fill_price(q, close_action, self.cost)
@@ -515,10 +543,14 @@ class PaperBroker:
 
     @staticmethod
     def _chain_for(source: QuoteSource, pos: PaperPosition) -> list[OptionQuote]:
-        """Resolve the relevant chain for a position from the quote source."""
+        """Resolve the relevant chain for a position from the quote source.
+        A ticker the store doesn't have -> empty chain -> caller holds last mark."""
         if isinstance(source, ChainStore):
-            dates = source.trading_dates(pos.ticker)
-            if not dates:
+            try:
+                dates = source.trading_dates(pos.ticker)
+                if not dates:
+                    return []
+                return source.chain(pos.ticker, dates[-1])
+            except FileNotFoundError:
                 return []
-            return source.chain(pos.ticker, dates[-1])
         return [q for q in source if q.ticker.upper() == pos.ticker.upper()]

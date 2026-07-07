@@ -148,11 +148,22 @@ Each one biases results in a known direction; read this before trusting a number
   event. Promoted strategies are kept — they were validated on holdout data
   and remain valid.
 - **Market-hours aware (RTH, no holiday calendar).** Outside Mon-Fri
-  09:30-16:00 ET the desk makes NO Alpha Vantage calls (tape and marks serve
-  EOD data, labeled as such) and the autopilot's trade cycle is paused — no
-  opens or exits at stale weekend/overnight prices; research runs 24/7 since
-  it is offline compute. NYSE holidays are not modeled: on a holiday the desk
-  behaves like a weekday, wasting a few AV calls that return stale quotes.
+  09:30-16:00 ET the autopilot's trade cycle is paused (no opens/exits at
+  weekend/overnight prices) and the tape stops calling AV; research runs 24/7
+  (offline compute). NYSE holidays are not modeled.
+- **Open positions are marked from AV both during and after hours.** Off-hours,
+  AV's realtime endpoint returns the last session's CLOSING option prices —
+  the correct EOD mark for positions opened from a live chain. Off-hours marks
+  are labeled `live=False` (EOD) and throttled to every 15 min (prices are
+  static) so the book isn't polled all night. The book's mark is only ever the
+  same live source it was opened from.
+- **The store fallback never mis-prices.** When AV is unavailable (no key /
+  error) the historical store is a last resort, but it only re-prices a
+  position whose EXACT contracts it holds (same kind + expiry + strike). It
+  never matches across expiries — pricing an August leg off a June contract
+  once produced impossible negative long-option marks (a loss worse than the
+  premium paid). A position the store can't price is HELD at its last mark, not
+  fabricated.
 - **Live trading is a seam, not a promise.** The IBKR adapter maps legs to
   combo orders but has never placed a real order; validate in IB's paper
   environment first, with tiny size.

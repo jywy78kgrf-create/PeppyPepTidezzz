@@ -322,3 +322,41 @@ def test_greeks_endpoint_uses_live_chain(tmp_path, monkeypatch):
     assert g["unmatched_legs"] == 0, "live-opened legs must match the live greeks chain"
     assert abs(g["totals"]["delta"]) > 0.0, "a long call must carry non-zero delta"
     assert g["totals"]["theta"] != 0.0, "a long option must carry theta"
+
+
+def test_match_quote_never_crosses_expiry():
+    """The mark matcher must not price an Aug leg off a June contract — that
+    cross-expiry match is what produced impossible negative long-option marks."""
+    from datetime import date as _d
+    from optdesk.paper.broker import _match_quote
+    from optdesk.contracts import OptionQuote, OptionType, Leg, Action
+
+    june = OptionQuote("X", _d(2026, 6, 1), _d(2026, 6, 26), 240.0, OptionType.CALL,
+                       1.0, 1.2, 1.1, 0, 0, 0.2, 0.5, 0.0, 0.0, 0.0, 0.0, 240.0)
+    aug_leg = Leg(Action.BUY, OptionType.CALL, 240.0, _d(2026, 8, 14))
+    assert _match_quote([june], aug_leg) is None       # different expiry -> no match
+    same_leg = Leg(Action.BUY, OptionType.CALL, 240.0, _d(2026, 6, 26))
+    assert _match_quote([june], same_leg) is june      # same expiry -> matches
+
+
+def test_store_fallback_holds_last_mark_never_negative(tmp_path, monkeypatch):
+    """A live-opened long call whose expiry isn't in the store must HOLD its
+    last live mark under the store fallback — never mis-price to a negative
+    value (the impossible '-103% on basis' bug)."""
+    from optdesk.strategies.library import STRATEGIES
+    from optdesk.data.loader import ChainStore
+
+    monkeypatch.setattr(httpx, "get", _router())
+    av = AlphaVantage(key="k")
+    chain = live_chain(av, "SPY", asof=_ASOF)
+    pb = PaperBroker(state_dir=tmp_path, starting_cash=100_000.0)
+    pb.open(STRATEGIES["long_call"](chain, _UNDERLYING, {}), chain, qty=3)
+    pb.mark_live(av, when=_OPEN_TS)
+    last = pb.positions()[0].current_value
+    assert last > 0
+
+    # mark against a store that has no SPY Aug contracts -> must hold, not fabricate
+    pb.mark(ChainStore())
+    held = pb.positions()[0].current_value
+    assert held == last, "store fallback must hold the last mark, not re-price"
+    assert held >= 0, "a long call can never mark negative"

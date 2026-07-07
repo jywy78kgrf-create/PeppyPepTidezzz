@@ -138,7 +138,9 @@ def _open_real_position(tmp_path) -> tuple[PaperBroker, ChainStore]:
     from optdesk.strategies.library import STRATEGIES
 
     store = _store()
-    day = store.trading_dates("AAPL")[60]
+    # open off the LATEST chain so the position's contracts are present when the
+    # store-fallback marks against that same latest chain (no cross-expiry match)
+    day = store.trading_dates("AAPL")[-1]
     chain = store.chain("AAPL", day)
     spec = STRATEGIES["bull_put_spread"](chain, chain[0].underlying, {})
     assert spec is not None
@@ -251,13 +253,16 @@ def test_mark_live_without_key_falls_back_without_network(tmp_path, monkeypatch)
     assert pb.positions()[0].upnl != 0.0  # historical mark actually happened
 
 
-def test_mark_live_never_raises_even_when_fallback_fails(tmp_path, monkeypatch):
+def test_mark_live_never_raises_and_holds_when_unpriceable(tmp_path, monkeypatch):
     monkeypatch.setattr(httpx, "get", _no_network)
     _store()  # chains exist, but not for this ticker
     pb = _broker_with_position(tmp_path, ticker="ZZZZ")
+    before = pb.positions()[0].current_value
     out = pb.mark_live(AlphaVantage(key=""), store=ChainStore(), when=_OPEN_TS)  # must not raise
     assert out["live"] is False
-    assert "fallback failed" in out["reason"]
+    # unknown ticker can't be priced -> position is HELD at its last mark, no crash
+    assert pb.positions()[0].status == "OPEN"
+    assert pb.positions()[0].current_value == before
 
 
 # --------------------------------------------------------------------------- #
@@ -470,21 +475,22 @@ def test_market_open_regular_hours_and_weekend():
     assert market_open(datetime(2026, 1, 7, 14, 29)) is False
 
 
-def test_mark_live_skips_av_when_market_closed(tmp_path, monkeypatch):
-    """Off-hours: no AV request at all, EOD fallback with an honest reason."""
-    calls = []
+def test_mark_live_eod_off_hours_and_throttles(tmp_path, monkeypatch):
+    """Off-hours the book still marks from AV's EOD quotes (labeled live=False),
+    then throttles: the second call within 15 min holds without touching AV."""
+    fake = _fake_get(_AV_PAYLOAD)
+    monkeypatch.setattr(httpx, "get", fake)
+    pb = _broker_with_position(tmp_path)  # AAPL legs match _AV_PAYLOAD
+    out = pb.mark_live(AlphaVantage(key="k"), when=_dt(2026, 7, 4, 17, 0))  # Saturday
+    assert out["live"] is False           # EOD label off-hours
+    assert out.get("marked") == 1         # marked from AV EOD quotes
+    n_after_first = len(fake.calls)
+    assert n_after_first > 0              # AV WAS called for the EOD mark
 
-    def _boom(*a, **k):  # any AV HTTP call is a bug off-hours
-        calls.append(a)
-        raise AssertionError("AV was called while the market is closed")
-
-    monkeypatch.setattr(httpx, "get", _boom)
-    pb, store = _open_real_position(tmp_path)
-    out = pb.mark_live(AlphaVantage(key="k"), store=store,
-                       when=_dt(2026, 7, 4, 17, 0))  # Saturday
-    assert out["live"] is False
-    assert "market closed" in out["reason"]
-    assert calls == []
+    # a second mark right away holds the EOD value — no new AV traffic
+    out2 = pb.mark_live(AlphaVantage(key="k"), when=_dt(2026, 7, 4, 17, 5))
+    assert out2["live"] is False
+    assert len(fake.calls) == n_after_first, "off-hours mark must throttle AV"
 
 
 def test_trade_cycle_paused_when_market_closed(tmp_path):
