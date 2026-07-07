@@ -173,10 +173,11 @@ def test_kill_during_research_blocks_trade_phase(tmp_path):
 
     pilot = make_pilot(tmp_path, broker, learn=slow_learn)
     pilot.enable()
-    pilot.tick()
+    pilot.research_tick()              # research runs on its own heartbeat now
     assert events == ["learn_started"]
     assert pilot.status()["enabled"] is False
-    assert broker.opened_specs == []  # trade phase never ran
+    pilot.tick()                       # a trade tick after the kill does nothing
+    assert broker.opened_specs == []
 
 
 # --------------------------------------------------------------------------- #

@@ -369,3 +369,50 @@ def test_on_research_iter_appends_only_while_active(tmp_path):
     assert len(cur["iterations"]) == 1
     assert cur["iterations"][0]["n_trades"] == 7
     assert cur["trades_simulated"] == 7
+
+
+# --------------------------------------------------------------------------- #
+# Trading and research are independent heartbeats (no starvation)
+# --------------------------------------------------------------------------- #
+def test_trade_tick_does_not_run_research(tmp_path):
+    """A trade-cycle tick must NEVER trigger a research batch — otherwise a
+    long batch blocks trading (the delayed-trades bug)."""
+    broker = FakeBroker()
+    calls = []
+
+    def learn(s, t, st, e):
+        calls.append(1)
+        return good_learn(s, t, st, e)
+
+    pilot = make_pilot(tmp_path, broker, learn=learn)
+    pilot.enable()
+    pilot.tick()
+    assert calls == [], "trade tick must not invoke research"
+
+
+def test_research_tick_runs_research_only(tmp_path):
+    broker = FakeBroker()
+    calls = []
+
+    def learn(s, t, st, e):
+        calls.append(1)
+        return good_learn(s, t, st, e)
+
+    pilot = make_pilot(tmp_path, broker, learn=learn)
+    pilot.enable()
+    pilot.research_tick()
+    assert calls == [1]
+    # research must not open trades either
+    assert broker.opened_specs == []
+
+
+def test_trade_tick_opens_promoted_without_waiting_on_research(tmp_path):
+    """Once a config is promoted, the trade heartbeat opens it immediately —
+    it does not wait behind a research batch."""
+    broker = FakeBroker()
+    pilot = make_pilot(tmp_path, broker)
+    pilot.enable()
+    pilot.run_research_batch()          # populate a promoted config
+    assert pilot._state["promoted"], "good_learn should have promoted one"
+    pilot.tick()                        # trade cycle fires on its own
+    assert broker.opened_specs, "trade tick should open from the promoted config"

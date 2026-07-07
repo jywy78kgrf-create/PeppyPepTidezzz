@@ -128,7 +128,12 @@ class AutoPilot:
         # respond instantly. _tick_gate serializes tick bodies instead (the
         # heartbeat thread and an enable-kicked thread must not overlap).
         self._lock = threading.RLock()
-        self._tick_gate = threading.Lock()
+        # trading and research run on SEPARATE heartbeats/threads so a long
+        # research batch never starves the trade cycle (the reason trades were
+        # delayed under continuous research). Each gate makes its own loop
+        # non-reentrant; the short state lock keeps them consistent.
+        self._tick_gate = threading.Lock()      # guards the trade cycle
+        self._research_gate = threading.Lock()  # guards research batches
         self._store = store
         self._state_path = Path(state_path or STATE_DIR / "autopilot.json")
         self._broker_factory = broker_factory or self._default_broker_factory
@@ -345,12 +350,10 @@ class AutoPilot:
     # Scheduler entry point
     # ------------------------------------------------------------------ #
     def tick(self, now: Optional[datetime] = None) -> None:
-        """One scheduler heartbeat. Cheap when nothing is due. Never raises —
-        errors are logged to the activity feed so the loop survives.
-
-        Non-reentrant: a tick already in progress (e.g. a long research batch)
-        makes concurrent ticks no-ops. The state lock is only taken for short
-        reads/writes, so enable/disable/status NEVER wait on a running batch.
+        """Trade-cycle heartbeat — mark, protect, manage exits, open. Fast
+        (seconds). Runs on its own thread so it fires every ``trade_interval``
+        regardless of what research is doing. Never raises; the state lock is
+        only taken for short reads/writes, so the kill switch never waits.
         """
         if not self._tick_gate.acquire(blocking=False):
             return
@@ -358,14 +361,6 @@ class AutoPilot:
             now = now or self.now_fn()
             with self._lock:
                 if not self._state["enabled"] or self._state["breaker"]["tripped"]:
-                    return
-                research_due = self._due(
-                    self._state["last_research"],
-                    timedelta(hours=self.cfg.research_interval_hr), now)
-            if research_due:
-                self.run_research_batch(now)
-            with self._lock:
-                if not self._state["enabled"]:  # killed mid-research
                     return
                 trade_due = self._due(
                     self._state["last_trade_cycle"],
@@ -379,6 +374,30 @@ class AutoPilot:
             traceback.print_exc()
         finally:
             self._tick_gate.release()
+
+    def research_tick(self, now: Optional[datetime] = None) -> None:
+        """Research heartbeat — run one batch if due. Long-running (minutes to
+        tens of minutes), so it runs on a SEPARATE thread from ``tick`` and
+        can't block trading. Non-reentrant via its own gate; never raises."""
+        if not self._research_gate.acquire(blocking=False):
+            return
+        try:
+            now = now or self.now_fn()
+            with self._lock:
+                if not self._state["enabled"] or self._state["breaker"]["tripped"]:
+                    return
+                research_due = self._due(
+                    self._state["last_research"],
+                    timedelta(hours=self.cfg.research_interval_hr), now)
+            if research_due:
+                self.run_research_batch(now)
+        except Exception as exc:  # noqa: BLE001 - the loop must survive
+            with self._lock:
+                self._log("error", f"research: {type(exc).__name__}: {exc}")
+                self._save()
+            traceback.print_exc()
+        finally:
+            self._research_gate.release()
 
     @staticmethod
     def _due(last_iso: Optional[str], interval: timedelta, now: datetime) -> bool:
@@ -892,19 +911,26 @@ class _RiskShim:
 # --------------------------------------------------------------------------- #
 _pilot: Optional[AutoPilot] = None
 _thread: Optional[threading.Thread] = None
+_research_thread: Optional[threading.Thread] = None
 _singleton_lock = threading.Lock()
 
 
 def get_pilot() -> AutoPilot:
-    """Return the process singleton, starting the heartbeat thread once."""
-    global _pilot, _thread
+    """Return the process singleton, starting BOTH heartbeat threads once: a
+    fast trade-cycle loop and an independent research loop (so a long research
+    batch never delays trading)."""
+    global _pilot, _thread, _research_thread
     with _singleton_lock:
         if _pilot is None:
             _pilot = AutoPilot()
         if _thread is None or not _thread.is_alive():
-            _thread = threading.Thread(target=_heartbeat, name="autopilot",
+            _thread = threading.Thread(target=_heartbeat, name="autopilot-trade",
                                        daemon=True)
             _thread.start()
+        if _research_thread is None or not _research_thread.is_alive():
+            _research_thread = threading.Thread(
+                target=_research_heartbeat, name="autopilot-research", daemon=True)
+            _research_thread.start()
     return _pilot
 
 
@@ -915,3 +941,12 @@ def _heartbeat() -> None:
         p = _pilot
         if p is not None:
             p.tick()
+
+
+def _research_heartbeat() -> None:
+    import time
+    while True:
+        time.sleep(30)
+        p = _pilot
+        if p is not None:
+            p.research_tick()
