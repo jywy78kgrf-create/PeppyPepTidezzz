@@ -387,14 +387,17 @@ def _alpha_vantage():
     return AlphaVantage()
 
 
-def _paper_book(pb, live: bool) -> dict:
+def _paper_book(pb, live: bool, reason: str | None = None) -> dict:
     """Contract shape shared by GET /paper/positions and POST /paper/mark."""
-    return serialize({
+    out = {
         "positions": [p for p in pb.positions()],
         "equity": pb.equity(),
         "live": bool(live),
         "asof": _dt.datetime.now(_dt.timezone.utc).isoformat(),
-    })
+    }
+    if reason:  # why the mark isn't live (AV note / rate limit / market closed)
+        out["mark_reason"] = reason
+    return serialize(out)
 
 
 def _mark_and_book(pb) -> dict:
@@ -403,7 +406,7 @@ def _mark_and_book(pb) -> dict:
 
     ``mark_live`` snapshots equity history internally and never raises."""
     res = pb.mark_live(_alpha_vantage(), store=store())
-    return _paper_book(pb, res.get("live", False))
+    return _paper_book(pb, res.get("live", False), res.get("reason"))
 
 
 @app.get("/api/paper/positions")
