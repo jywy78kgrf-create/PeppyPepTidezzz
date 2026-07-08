@@ -363,13 +363,28 @@ class PaperBroker:
                     now_ts - self._last_av_mark).total_seconds() < 900:
                 self.snapshot(live=False)
                 return {"live": False, "marked": 0, "reason": "holding EOD mark"}
-            chains: dict[str, list[dict]] = {}
-            for tk in sorted({p.ticker.upper() for p in open_pos}):
+            # Fetch every position ticker's chain CONCURRENTLY — one slow
+            # sequential fetch per ticker was making the mark take 10-25s and
+            # miss the client's timeout ("STALE"). Wall time is now the single
+            # slowest fetch, not their sum.
+            tickers = sorted({p.ticker.upper() for p in open_pos})
+
+            def _fetch(tk: str):
                 rows = av.realtime_options(tk)
                 err = next(
                     (r["error"] for r in rows if isinstance(r, dict) and "error" in r),
                     None,
                 )
+                return tk, rows, err
+
+            chains: dict[str, list[dict]] = {}
+            if len(tickers) == 1:
+                results = [_fetch(tickers[0])]
+            else:
+                import concurrent.futures as _cf
+                with _cf.ThreadPoolExecutor(max_workers=min(8, len(tickers))) as ex:
+                    results = list(ex.map(_fetch, tickers))
+            for tk, rows, err in results:
                 if err is not None:
                     return self._mark_fallback(store, f"{tk}: {err}")
                 chains[tk] = [r for r in rows if isinstance(r, dict)]
