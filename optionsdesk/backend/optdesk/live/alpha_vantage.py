@@ -11,6 +11,8 @@ gracefully offline.
 from __future__ import annotations
 
 import datetime as _dt
+import threading
+import time as _time
 from typing import Any, Optional
 
 import httpx
@@ -19,6 +21,28 @@ import pandas as pd
 from ..config import SETTINGS
 
 _BASE_URL = "https://www.alphavantage.co/query"
+
+# Short-TTL response cache shared across AlphaVantage instances. The desk marks
+# the book AND computes greeks every ~30s, each needing the same realtime chain
+# per ticker — without this they'd double-fetch (and each poll re-fetch),
+# hammering the API (slow responses -> "STALE", wasted quota). A few seconds of
+# staleness in a mark is immaterial; option prices don't move that fast.
+_CACHE_TTL_S = 20.0
+_cache: dict[str, tuple[float, Any]] = {}
+_cache_lock = threading.Lock()
+
+
+def _cache_get(key: str) -> Any:
+    with _cache_lock:
+        hit = _cache.get(key)
+        if hit is not None and (_time.time() - hit[0]) < _CACHE_TTL_S:
+            return hit[1]
+    return None
+
+
+def _cache_put(key: str, value: Any) -> None:
+    with _cache_lock:
+        _cache[key] = (_time.time(), value)
 
 
 class AlphaVantage:
@@ -69,14 +93,18 @@ class AlphaVantage:
     # Endpoints
     # ------------------------------------------------------------------ #
     def quote(self, symbol: str) -> dict[str, Any]:
-        """Latest quote for ``symbol`` via GLOBAL_QUOTE."""
+        """Latest quote for ``symbol`` via GLOBAL_QUOTE (short-TTL cached)."""
+        ck = f"quote:{symbol.upper()}"
+        cached = _cache_get(ck)
+        if cached is not None:
+            return cached
         data = self._get({"function": "GLOBAL_QUOTE", "symbol": symbol})
         if "error" in data:
             return data
         raw = data.get("Global Quote", {}) or {}
         if not raw:
             return {"error": f"no quote for {symbol}", "symbol": symbol}
-        return {
+        out = {
             "symbol": raw.get("01. symbol", symbol),
             "price": _to_float(raw.get("05. price")),
             "open": _to_float(raw.get("02. open")),
@@ -88,6 +116,8 @@ class AlphaVantage:
             "change_pct": raw.get("10. change percent"),
             "latest_trading_day": raw.get("07. latest trading day"),
         }
+        _cache_put(ck, out)
+        return out
 
     def realtime_options(self, symbol: str) -> list[dict[str, Any]]:
         """Realtime option chain via REALTIME_OPTIONS (premium endpoint).
@@ -99,11 +129,15 @@ class AlphaVantage:
         any transport failure) surface as ``[{"error": ...}]`` instead of
         raising, so callers can degrade gracefully.
         """
+        ck = f"rtopts:{symbol.upper()}"
+        cached = _cache_get(ck)
+        if cached is not None:
+            return cached
         data = self._get(
             {"function": "REALTIME_OPTIONS", "symbol": symbol, "require_greeks": "true"}
         )
         if "error" in data:
-            return [data]
+            return [data]  # errors are NOT cached — retry next call
         contracts = data.get("data") or data.get("options") or []
         if not isinstance(contracts, list):
             return [{"error": "unexpected options payload", "symbol": symbol}]
@@ -112,6 +146,7 @@ class AlphaVantage:
             row = _normalize_contract(raw, symbol)
             if row is not None:
                 out.append(row)
+        _cache_put(ck, out)
         return out
 
     def daily(self, symbol: str, outputsize: str = "compact") -> pd.DataFrame:
