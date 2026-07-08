@@ -27,7 +27,7 @@ _BASE_URL = "https://www.alphavantage.co/query"
 # per ticker — without this they'd double-fetch (and each poll re-fetch),
 # hammering the API (slow responses -> "STALE", wasted quota). A few seconds of
 # staleness in a mark is immaterial; option prices don't move that fast.
-_CACHE_TTL_S = 20.0
+_CACHE_TTL_S = 60.0
 _cache: dict[str, tuple[float, Any]] = {}
 _cache_lock = threading.Lock()
 

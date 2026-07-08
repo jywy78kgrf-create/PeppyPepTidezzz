@@ -33,7 +33,11 @@ import type {
 import Panel from './Panel'
 import { usd } from '../lib/format'
 
-const REFRESH_MS = 30_000
+// Re-mark every 2 min while visible. Gentle on the Alpha Vantage rate limit
+// (the key is often shared with other apps); for a multi-week paper test,
+// 2-min marks lose no meaningful fidelity. The autopilot also marks on its
+// own trade cycle during market hours.
+const REFRESH_MS = 120_000
 
 /* ------------------------------------------------------------------ */
 /*  Small pieces                                                        */
@@ -687,7 +691,7 @@ export default function TradingDesk({ className }: { className?: string }) {
               </span>
             </span>
             <span className="text-[9px] text-[var(--color-ink-faint)]">
-              marked every 30s while visible
+              marked every 2 min while visible
             </span>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto pr-1">
