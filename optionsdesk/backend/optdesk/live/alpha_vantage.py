@@ -45,6 +45,16 @@ def _cache_put(key: str, value: Any) -> None:
         _cache[key] = (_time.time(), value)
 
 
+def _is_throttle(msg: Any) -> bool:
+    """True if an AV error message reads like a transient rate-limit/throttle
+    (worth retrying) rather than a hard error (bad symbol, no key, premium)."""
+    m = str(msg).lower()
+    return any(s in m for s in (
+        "please retry", "rate limit", "per minute", "higher api call",
+        "thank you for using alpha vantage",
+    ))
+
+
 class AlphaVantage:
     """Client for Alpha Vantage REST endpoints used by the desk."""
 
@@ -89,6 +99,24 @@ class AlphaVantage:
                 return {"error": data["Information"]}
         return data
 
+    def _get_with_retry(self, params: dict[str, Any],
+                        attempts: int = 3) -> dict[str, Any]:
+        """``_get`` that retries TRANSIENT throttles with short backoff.
+
+        The API key is often shared with other apps that briefly saturate the
+        per-minute rate cap; AV answers "...Please retry" during those bursts.
+        Retrying a beat later rides through the burst instead of dropping to an
+        EOD mark. Non-throttle errors (bad symbol, no key, premium wall) are
+        returned immediately — no point retrying those."""
+        data: dict[str, Any] = {}
+        for i in range(max(1, attempts)):
+            data = self._get(params)
+            if "error" not in data or not _is_throttle(data["error"]):
+                return data
+            if i < attempts - 1:
+                _time.sleep(0.6 * (i + 1))  # 0.6s, 1.2s
+        return data
+
     # ------------------------------------------------------------------ #
     # Endpoints
     # ------------------------------------------------------------------ #
@@ -98,7 +126,7 @@ class AlphaVantage:
         cached = _cache_get(ck)
         if cached is not None:
             return cached
-        data = self._get({"function": "GLOBAL_QUOTE", "symbol": symbol})
+        data = self._get_with_retry({"function": "GLOBAL_QUOTE", "symbol": symbol})
         if "error" in data:
             return data
         raw = data.get("Global Quote", {}) or {}
@@ -133,7 +161,7 @@ class AlphaVantage:
         cached = _cache_get(ck)
         if cached is not None:
             return cached
-        data = self._get(
+        data = self._get_with_retry(
             {"function": "REALTIME_OPTIONS", "symbol": symbol, "require_greeks": "true"}
         )
         if "error" in data:

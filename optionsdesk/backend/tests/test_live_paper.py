@@ -509,3 +509,41 @@ def test_trade_cycle_paused_when_market_closed(tmp_path):
     }]
     pilot.run_trade_cycle(datetime(2026, 7, 4, 17, 0))  # Saturday
     assert broker.opened_specs == [] and broker.closed_idx == []
+
+
+# --------------------------------------------------------------------------- #
+# Transient-throttle retry (shared key briefly saturated by other apps)
+# --------------------------------------------------------------------------- #
+def test_realtime_options_retries_transient_throttle(monkeypatch):
+    import optdesk.live.alpha_vantage as avmod
+    avmod._cache.clear()
+    monkeypatch.setattr(avmod._time, "sleep", lambda *_a, **_k: None)  # no real delay
+    seq = [{"Error Message": "Invalid API call. Please retry or visit the documentation"},
+           _AV_PAYLOAD]
+    calls = {"n": 0}
+
+    def get(url, params=None, timeout=None, **kw):
+        i = min(calls["n"], len(seq) - 1)
+        calls["n"] += 1
+        return _Resp(seq[i])
+
+    monkeypatch.setattr(httpx, "get", get)
+    rows = AlphaVantage(key="k").realtime_options("AAPL")
+    assert calls["n"] >= 2, "a 'Please retry' throttle must be retried"
+    assert len(rows) == 3 and "error" not in rows[0], "retry then succeeded"
+
+
+def test_realtime_options_does_not_retry_hard_error(monkeypatch):
+    import optdesk.live.alpha_vantage as avmod
+    avmod._cache.clear()
+    monkeypatch.setattr(avmod._time, "sleep", lambda *_a, **_k: None)
+    calls = {"n": 0}
+
+    def get(url, params=None, timeout=None, **kw):
+        calls["n"] += 1
+        return _Resp({"Information": "This is a premium endpoint. Subscribe to unlock."})
+
+    monkeypatch.setattr(httpx, "get", get)
+    rows = AlphaVantage(key="k").realtime_options("AAPL")
+    assert calls["n"] == 1, "a premium/entitlement wall is a hard error — no retry"
+    assert "error" in rows[0]
