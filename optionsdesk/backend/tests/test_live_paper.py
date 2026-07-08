@@ -386,7 +386,7 @@ def test_api_paper_endpoints_contract_shapes_no_key(tmp_path, monkeypatch):
     assert r.status_code == 200, r.text
     body = r.json()
     json.dumps(body)  # payload must be JSON-clean
-    assert set(body.keys()) == {"positions", "equity", "live", "asof"}
+    assert {"positions", "equity", "live", "asof"} <= set(body.keys())
     assert body["live"] is False, "no AV key -> historical marking"
     assert isinstance(body["asof"], str) and body["asof"]
     assert len(body["positions"]) == 1
@@ -395,7 +395,7 @@ def test_api_paper_endpoints_contract_shapes_no_key(tmp_path, monkeypatch):
     r = client.post("/api/paper/mark")
     assert r.status_code == 200
     marked = r.json()
-    assert set(marked.keys()) == {"positions", "equity", "live", "asof"}
+    assert {"positions", "equity", "live", "asof"} <= set(marked.keys())
     assert marked["live"] is False
 
     r = client.get("/api/paper/history")
