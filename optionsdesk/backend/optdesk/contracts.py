@@ -236,6 +236,10 @@ class PaperPosition:
     opened: datetime
     legs: list[dict]
     cost_basis: float
-    current_value: float
+    current_value: float          # mark-to-market at mid (for display uPnL)
     upnl: float
     status: str = "OPEN"
+    # net proceeds if closed NOW — crosses the spread + pays exit commission,
+    # so a close realises a real round-trip fill, not a free mid. None until the
+    # position has been marked (close then falls back to current_value).
+    liquidation_value: Optional[float] = None

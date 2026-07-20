@@ -376,7 +376,7 @@ function seedPositions(): PaperPosition[] {
         { action: 'SELL', kind: 'P', strike: 1160, expiry: '2026-07-17', quantity: 4, price: 14.2 },
         { action: 'BUY', kind: 'P', strike: 1140, expiry: '2026-07-17', quantity: 4, price: 12.05 },
       ],
-      cost_basis: -860, current_value: -524, upnl: 336, status: 'OPEN',
+      cost_basis: -860, current_value: -524, upnl: 336, liquidation_value: -579, status: 'OPEN',
     },
     {
       ticker: 'SPY', spec_name: 'iron_condor', opened: '2026-06-23T13:45:00+00:00',
@@ -386,7 +386,7 @@ function seedPositions(): PaperPosition[] {
         { action: 'SELL', kind: 'C', strike: 640, expiry: '2026-07-10', quantity: 6, price: 1.9 },
         { action: 'BUY', kind: 'C', strike: 650, expiry: '2026-07-10', quantity: 6, price: 1.0 },
       ],
-      cost_basis: -1008, current_value: -843, upnl: 165, status: 'OPEN',
+      cost_basis: -1008, current_value: -843, upnl: 165, liquidation_value: -888, status: 'OPEN',
     },
     {
       ticker: 'AAPL', spec_name: 'calendar_call', opened: '2026-06-12T15:02:00+00:00',
@@ -394,12 +394,12 @@ function seedPositions(): PaperPosition[] {
         { action: 'BUY', kind: 'C', strike: 215, expiry: '2026-08-21', quantity: 3, price: 6.4 },
         { action: 'SELL', kind: 'C', strike: 215, expiry: '2026-07-17', quantity: 3, price: 3.35 },
       ],
-      cost_basis: 915, current_value: 1088, upnl: 173, status: 'OPEN',
+      cost_basis: 915, current_value: 1088, upnl: 173, liquidation_value: 1066, status: 'OPEN',
     },
     {
       ticker: 'TSLA', spec_name: 'long_put', opened: '2026-06-25T17:20:00+00:00',
       legs: [{ action: 'BUY', kind: 'P', strike: 240, expiry: '2026-07-24', quantity: 2, price: 3.9 }],
-      cost_basis: 780, current_value: 642, upnl: -138, status: 'OPEN',
+      cost_basis: 780, current_value: 642, upnl: -138, liquidation_value: 630, status: 'OPEN',
     },
     {
       ticker: 'QQQ', spec_name: 'short_straddle', opened: '2026-06-20T14:05:00+00:00',
@@ -407,7 +407,7 @@ function seedPositions(): PaperPosition[] {
         { action: 'SELL', kind: 'C', strike: 548, expiry: '2026-07-17', quantity: 2, price: 8.4 },
         { action: 'SELL', kind: 'P', strike: 548, expiry: '2026-07-17', quantity: 2, price: 7.9 },
       ],
-      cost_basis: -3260, current_value: -3542, upnl: -282, status: 'OPEN',
+      cost_basis: -3260, current_value: -3542, upnl: -282, liquidation_value: -3570, status: 'OPEN',
     },
   ]
 }
@@ -509,8 +509,11 @@ export function mockPaperMark(): PaperBookResponse {
     if (p.status !== 'OPEN') continue
     const scale = Math.max(60, Math.abs(p.current_value))
     const drift = (Math.random() - 0.5) * 0.012 * scale
+    // preserve the exit-cost gap as the mark drifts (liquidation stays "worse")
+    const gap = p.liquidation_value != null ? p.current_value - p.liquidation_value : null
     p.current_value = Math.round((p.current_value + drift) * 100) / 100
     p.upnl = Math.round((p.current_value - p.cost_basis) * 100) / 100
+    if (gap != null) p.liquidation_value = Math.round((p.current_value - gap) * 100) / 100
   }
   appendHistoryPoint(state, live)
   return bookResponse(state, live)

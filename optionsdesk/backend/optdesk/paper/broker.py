@@ -84,6 +84,21 @@ def _fill_price(quote: OptionQuote, action: Action, cost: CostModel) -> float:
     return round(mid + slip if action == Action.BUY else mid - slip, 4)
 
 
+def _live_fill_price(contract: dict, action: Action, cost: CostModel) -> float:
+    """Executable per-share price from a normalized realtime contract — same
+    adverse spread-crossing as ``_fill_price`` but for the live dict form.
+    Used to charge a realistic EXIT fill when closing a paper position."""
+    from ..quant.pricing import slippage_fraction
+
+    mid = _live_mid(contract)
+    bid = float(contract.get("bid") or 0.0)
+    ask = float(contract.get("ask") or 0.0)
+    spread = max(0.0, ask - bid)
+    frac = slippage_fraction(mid, spread, cost)
+    slip = max(cost.min_slippage, frac * spread)
+    return round(mid + slip if action == Action.BUY else mid - slip, 4)
+
+
 def _leg_commission(leg: Leg, cost: CostModel) -> float:
     """Commission + exchange fee for one leg (per contract, per side)."""
     n = abs(leg.quantity)
@@ -254,6 +269,8 @@ class PaperBroker:
             "legs": p.legs,
             "cost_basis": round(p.cost_basis, 4),
             "current_value": round(p.current_value, 4),
+            "liquidation_value": (round(p.liquidation_value, 4)
+                                  if p.liquidation_value is not None else None),
             "upnl": round(p.upnl, 4),
             "status": p.status,
         }
@@ -267,6 +284,8 @@ class PaperBroker:
             legs=d["legs"],
             cost_basis=float(d["cost_basis"]),
             current_value=float(d["current_value"]),
+            liquidation_value=(float(d["liquidation_value"])
+                               if d.get("liquidation_value") is not None else None),
             upnl=float(d["upnl"]),
             status=d.get("status", "OPEN"),
         )
@@ -358,6 +377,9 @@ class PaperBroker:
                 continue
             pos.current_value = round(value, 4)
             pos.upnl = round(value - pos.cost_basis, 4)
+            # historical marks already cross the spread + charge exit
+            # commission, so the mark IS the liquidation value.
+            pos.liquidation_value = round(value, 4)
         self._save()
         self.snapshot(live=False)
 
@@ -428,9 +450,13 @@ class PaperBroker:
                 chains[tk] = [r for r in rows if isinstance(r, dict)]
             marked = 0
             for pos in open_pos:
-                value, all_matched = self._live_value(pos, chains.get(pos.ticker.upper(), []))
+                chain = chains.get(pos.ticker.upper(), [])
+                value, all_matched = self._live_value(pos, chain)
                 pos.current_value = round(value, 4)
                 pos.upnl = round(value - pos.cost_basis, 4)
+                # net-of-exit-cost proceeds, so a close charges a real fill.
+                liq, _ = self._live_liquidation(pos, chain)
+                pos.liquidation_value = round(liq, 4)
                 if all_matched:
                     marked += 1
             self._last_av_mark = now_ts
@@ -482,6 +508,51 @@ class PaperBroker:
             value += sign * _live_mid(c) * qty * CONTRACT_MULT
         return value, all_matched
 
+    def _live_liquidation(self, pos: PaperPosition,
+                          contracts: list[dict]) -> tuple[float, bool]:
+        """Net proceeds if the position were closed NOW off live contracts.
+
+        Mirrors ``_live_value`` but the CLOSING side crosses the spread
+        adversely (via ``_live_fill_price``) and pays exit commission per
+        contract — so a close realises a real round-trip fill, never a free
+        mid. This is what makes a paper win/loss honest: a small-premium credit
+        trade can round-trip into the red once the exit half-spread + fees are
+        charged. Unmatched legs are held flat at their open price (same
+        convention as the mid mark). Returns ``(value, every_leg_matched)``.
+        """
+        index: dict[tuple[str, float, str], dict] = {}
+        for c in contracts:
+            try:
+                key = (str(c["expiry"]), round(float(c["strike"]), 4),
+                       str(c["option_type"]).upper())
+            except (KeyError, TypeError, ValueError):
+                continue
+            index[key] = c
+        value = 0.0
+        commission = 0.0
+        all_matched = True
+        for ls in pos.legs:
+            qty = abs(int(ls["quantity"]))
+            opened_buy = ls["action"] != Action.SELL.value
+            # Closing reverses the open: a long leg is SOLD, a short is BOUGHT.
+            close_action = Action.SELL if opened_buy else Action.BUY
+            # Every leg costs commission + exchange fee to close, matched or not.
+            commission += (self.cost.commission_per_contract
+                           + self.cost.exchange_fee_per_contract) * qty
+            c = index.get((str(ls["expiry"]), round(float(ls["strike"]), 4),
+                           str(ls["kind"]).upper()))
+            if c is None:
+                all_matched = False
+                # can't price the exit fill — hold this leg flat at open price.
+                value += (1.0 if opened_buy else -1.0) * float(
+                    ls["open_price"]) * qty * CONTRACT_MULT
+                continue
+            price = _live_fill_price(c, close_action, self.cost)
+            # SELL to close brings cash in (+); BUY to close costs cash (-).
+            sign = 1.0 if close_action == Action.SELL else -1.0
+            value += sign * price * qty * CONTRACT_MULT
+        return value - commission, all_matched
+
     # ------------------------------------------------------------------ #
     # Equity history
     # ------------------------------------------------------------------ #
@@ -527,16 +598,22 @@ class PaperBroker:
         pos = self._positions[idx]
         if pos.status != "OPEN":
             return pos
-        # Realise the currently-marked value back into cash.
-        self._cash += pos.current_value
+        # Realise the EXIT-fill value (spread crossed + exit commission), not
+        # the free mid: a paper close pays the same round-trip costs a real one
+        # would, so a "winning" mid-mark can still book a loss. Falls back to
+        # the mid mark only if the position was never marked live/historically.
+        proceeds = (pos.liquidation_value
+                    if pos.liquidation_value is not None else pos.current_value)
+        self._cash += proceeds
+        pos.current_value = round(proceeds, 4)
         pos.status = "CLOSED"
-        pos.upnl = round(pos.current_value - pos.cost_basis, 4)
+        pos.upnl = round(proceeds - pos.cost_basis, 4)
         self._save()
         try:  # permanent audit copy (never fatal)
             self.ledger.record_close(
                 ticker=pos.ticker, opened=pos.opened.isoformat()
                 if hasattr(pos.opened, "isoformat") else str(pos.opened),
-                close_value=pos.current_value, pnl=pos.upnl, reason=reason)
+                close_value=proceeds, pnl=pos.upnl, reason=reason)
         except Exception:  # noqa: BLE001
             pass
         return pos

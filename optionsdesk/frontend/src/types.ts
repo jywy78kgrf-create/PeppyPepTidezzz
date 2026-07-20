@@ -163,8 +163,11 @@ export interface PaperPosition {
   opened: string // ISO datetime
   legs: PaperLeg[]
   cost_basis: number
-  current_value: number
+  current_value: number // mark-to-market at mid
   upnl: number
+  // net proceeds if closed NOW: crosses the spread + pays exit commission, so a
+  // close realises a real round-trip fill, not a free mid. null until marked.
+  liquidation_value?: number | null
   status: string // "OPEN" | "CLOSED"
 }
 

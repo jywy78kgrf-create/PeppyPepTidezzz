@@ -221,6 +221,12 @@ function PositionCard({
   const color = up ? 'var(--color-up)' : 'var(--color-down)'
   const denom = Math.abs(p.cost_basis)
   const pct = denom > 1e-9 ? (p.upnl / denom) * 100 : null
+  // what it costs to actually get out: mid mark minus the net liquidation
+  // value (crosses the spread + exit commission). Shown so a "green" mid mark
+  // never hides the real round-trip cost of closing.
+  const liq = p.liquidation_value ?? null
+  const exitCost = liq !== null ? p.current_value - liq : null
+  const netPnl = liq !== null ? liq - p.cost_basis : null
   // meter: uPnL as a fraction of basis, clamped to ±50% for display
   const frac = pct === null ? 0 : Math.max(-1, Math.min(1, pct / 50))
   return (
@@ -305,6 +311,19 @@ function PositionCard({
           Close
         </button>
       </div>
+
+      {exitCost !== null && netPnl !== null && (
+        <div
+          className="num text-[8.5px] text-[var(--color-ink-faint)]"
+          title="What you'd actually net closing now: the mid mark minus the exit fill (crossing the spread) and closing commission. This is what gets booked as realised P&L — a green mid can still net a loss."
+        >
+          exit cost −{usd(exitCost, 2)} → net if closed{' '}
+          <span style={{ color: netPnl >= 0 ? 'var(--color-up)' : 'var(--color-down)' }}>
+            {netPnl >= 0 ? '+' : ''}
+            {usd(netPnl, 2)}
+          </span>
+        </div>
+      )}
     </motion.div>
   )
 }

@@ -266,6 +266,65 @@ def test_mark_live_never_raises_and_holds_when_unpriceable(tmp_path, monkeypatch
 
 
 # --------------------------------------------------------------------------- #
+# 2b. Exit costs — closing crosses the spread + pays commission (a mid "win"
+#     can still book a loss once the real round-trip cost is charged)
+# --------------------------------------------------------------------------- #
+def test_close_charges_exit_costs_not_free_mid(tmp_path, monkeypatch):
+    """After a live mark, liquidation_value is strictly below the mid mark, and
+    closing realises the liquidation value — not the free mid."""
+    monkeypatch.setattr(httpx, "get", _fake_get(_AV_PAYLOAD))
+    pb = _broker_with_position(tmp_path)
+    cash0 = pb.equity()["cash"]
+    # mirror a real open so the ledger has a row for record_close to update
+    pos0 = pb.positions()[0]
+    pb.ledger.record_open(ticker=pos0.ticker, opened=pos0.opened.isoformat(),
+                          strategy=pos0.spec_name, qty=1,
+                          cost_basis=pos0.cost_basis, legs=pos0.legs)
+
+    pb.mark_live(AlphaVantage(key="k"), when=_OPEN_TS)
+    pos = pb.positions()[0]
+    # mid mark: short 95P -110 + long 100C +500 = 390
+    assert pos.current_value == pytest.approx(390.0)
+    # liquidation crosses the spread on BOTH legs + pays 2*(0.65+0.05) fees:
+    #   close 95P (BUY):  mid 1.10 + slip 0.083 = 1.183  -> -118.30
+    #   close 100C (SELL): mid 5.00 - slip 0.115 = 4.885 -> +488.50
+    #   value 370.20 - commission 1.40 = 368.80
+    assert pos.liquidation_value == pytest.approx(368.80, abs=0.01)
+    assert pos.liquidation_value < pos.current_value, "exit is never free"
+
+    closed = pb.close(0)
+    # realised at the liquidation value, not the 390 mid
+    assert closed.upnl == pytest.approx(368.80 - 350.0, abs=0.01)
+    assert pb.equity()["cash"] == pytest.approx(cash0 + 368.80, abs=0.01)
+    # the ledger books the same net-of-cost realised P&L
+    realized, n = pb.ledger.realized()
+    assert n == 1 and realized == pytest.approx(368.80 - 350.0, abs=0.01)
+
+
+def test_close_without_mark_falls_back_to_mid(tmp_path):
+    """A position never marked (no liquidation_value) still closes — at its
+    current_value — rather than crashing."""
+    pb = _broker_with_position(tmp_path)
+    assert pb.positions()[0].liquidation_value is None
+    cash0 = pb.equity()["cash"]
+    closed = pb.close(0)
+    assert closed.upnl == pytest.approx(0.0)  # current_value 350 == cost_basis
+    assert pb.equity()["cash"] == pytest.approx(cash0 + 350.0)
+
+
+def test_liquidation_value_survives_reload(tmp_path, monkeypatch):
+    """liquidation_value persists in paper.json so a restart doesn't drop back
+    to a free-mid close."""
+    monkeypatch.setattr(httpx, "get", _fake_get(_AV_PAYLOAD))
+    pb = _broker_with_position(tmp_path)
+    pb.mark_live(AlphaVantage(key="k"), when=_OPEN_TS)
+    liq = pb.positions()[0].liquidation_value
+    assert liq is not None
+    pb2 = PaperBroker(state_dir=tmp_path, starting_cash=10_000.0)
+    assert pb2.positions()[0].liquidation_value == pytest.approx(liq)
+
+
+# --------------------------------------------------------------------------- #
 # 3. History snapshots — append, throttle, force, persistence
 # --------------------------------------------------------------------------- #
 def test_snapshot_appends_then_throttles_then_forces(tmp_path):
