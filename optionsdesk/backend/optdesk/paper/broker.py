@@ -9,11 +9,32 @@ P&L reconciles with backtest P&L for identical legs and quotes.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+import threading
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional, Union
 
 from ..config import STATE_DIR
+
+# One write-lock per state file, shared across every PaperBroker instance in
+# the process. The API creates a fresh broker per request and the autopilot has
+# its own — without this they wrote the SAME temp file concurrently and
+# clobbered each other into a corrupt paper.json, which then reset the account
+# to a fresh $100k. Serialized writes + a unique temp file per write fix it.
+_SAVE_LOCKS: dict[str, threading.Lock] = {}
+_SAVE_LOCKS_GUARD = threading.Lock()
+
+
+def _save_lock_for(path: Path) -> threading.Lock:
+    key = str(path)
+    with _SAVE_LOCKS_GUARD:
+        lk = _SAVE_LOCKS.get(key)
+        if lk is None:
+            lk = threading.Lock()
+            _SAVE_LOCKS[key] = lk
+        return lk
 from ..contracts import (
     Action,
     CostModel,
@@ -176,9 +197,26 @@ class PaperBroker:
             "positions": [self._pos_to_dict(p) for p in self._positions],
             "history": self._history,
         }
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2, default=str))
-        tmp.replace(self.path)  # atomic: a crash mid-write can't corrupt state
+        payload = json.dumps(data, indent=2, default=str)
+        # Serialize writes per file AND use a UNIQUE temp file per write, so
+        # concurrent brokers can never clobber a shared temp into a corrupt
+        # paper.json (the bug that was resetting the account). os.replace is
+        # atomic — a crash mid-write leaves the previous good file intact.
+        with _save_lock_for(self.path):
+            fd, tmpname = tempfile.mkstemp(
+                dir=str(self.path.parent), prefix=".paper-", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as fh:
+                    fh.write(payload)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                os.replace(tmpname, self.path)
+            except Exception:
+                try:
+                    os.unlink(tmpname)
+                except OSError:
+                    pass
+                raise
 
     @staticmethod
     def _history_from(data: dict) -> list[dict]:
@@ -506,13 +544,17 @@ class PaperBroker:
     def equity(self) -> dict:
         """Account snapshot: cash, unrealised/realised P&L, and total equity.
 
-        ``realized`` sums the locked-in P&L of CLOSED positions — identical to
-        ``cash - starting_cash`` adjusted for the entry cash flows still tied
-        up in open positions, since each close realises exactly its upnl.
+        ``realized`` is read from the append-only LEDGER (the permanent record),
+        not from closed positions in the working book — so a book reset or a
+        recovered file can never blank your realized P&L. Falls back to the
+        in-book sum if the ledger is unavailable.
         """
         upnl = sum(p.upnl for p in self._positions if p.status == "OPEN")
         open_value = sum(p.current_value for p in self._positions if p.status == "OPEN")
-        realized = sum(p.upnl for p in self._positions if p.status == "CLOSED")
+        try:
+            realized, _ = self.ledger.realized(since=self._epoch)
+        except Exception:  # noqa: BLE001 - never let audit read break equity
+            realized = sum(p.upnl for p in self._positions if p.status == "CLOSED")
         return {
             "cash": round(self._cash, 2),
             "open_value": round(open_value, 2),
@@ -521,6 +563,22 @@ class PaperBroker:
             "total": round(self._cash + open_value, 2),
             "starting_cash": round(self._starting_cash, 2),
         }
+
+    def reconcile_from_ledger(self) -> dict:
+        """Restore account cash to reflect the permanent realized P&L.
+
+        After a book reset/corruption, cash was wiped to ``starting_cash`` even
+        though real closed-trade P&L is recorded in the ledger. Recompute:
+        ``cash = starting_cash + ledger_realized - cost of current open book``.
+        Idempotent — always derives the same value from the ledger + open
+        positions, so it's safe to run more than once."""
+        realized, n = self.ledger.realized(since=self._epoch)
+        open_cost = sum(p.cost_basis for p in self._positions if p.status == "OPEN")
+        self._cash = round(self._starting_cash + realized - open_cost, 4)
+        self._save()
+        return {"reconciled_realized": round(realized, 2),
+                "closed_trades": n, "cash": round(self._cash, 2),
+                "equity": self.equity()}
 
     # ------------------------------------------------------------------ #
     # Marking internals

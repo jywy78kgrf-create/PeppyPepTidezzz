@@ -419,6 +419,13 @@ def paper_mark() -> dict:
     return _mark_and_book(_paper())
 
 
+@app.post("/api/paper/reconcile")
+def paper_reconcile() -> dict:
+    """Restore account cash to reflect the permanent ledger realized P&L
+    (after a book reset/corruption wiped it). Idempotent."""
+    return serialize(_paper().reconcile_from_ledger())
+
+
 @app.get("/api/paper/history")
 def paper_history() -> dict:
     """Equity history. Served from the permanent SQLite ledger when it has

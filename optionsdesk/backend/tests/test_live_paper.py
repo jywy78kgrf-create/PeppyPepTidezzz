@@ -547,3 +547,61 @@ def test_realtime_options_does_not_retry_hard_error(monkeypatch):
     rows = AlphaVantage(key="k").realtime_options("AAPL")
     assert calls["n"] == 1, "a premium/entitlement wall is a hard error — no retry"
     assert "error" in rows[0]
+
+
+# --------------------------------------------------------------------------- #
+# Book-file durability + realized-from-ledger (the account-reset bug)
+# --------------------------------------------------------------------------- #
+def test_concurrent_saves_never_corrupt_the_book(tmp_path):
+    """Many brokers writing the same paper.json concurrently must never
+    produce a corrupt file (the bug that reset the account to $100k)."""
+    import threading
+    errors = []
+
+    def worker(n):
+        try:
+            for _ in range(25):
+                pb = PaperBroker(state_dir=tmp_path, starting_cash=100_000.0)
+                pb._cash = 100_000.0 + n
+                pb._save()
+                json.loads((tmp_path / "paper.json").read_text())  # must parse
+        except Exception as exc:  # noqa: BLE001
+            errors.append(repr(exc))
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(10)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == [], errors
+    assert not list(tmp_path.glob(".paper-*.tmp")), "temp files leaked"
+    assert isinstance(json.loads((tmp_path / "paper.json").read_text()), dict)
+
+
+def test_realized_survives_book_reset_via_ledger(tmp_path):
+    """Realized P&L is read from the permanent ledger, so wiping the working
+    book (reset/corruption) does NOT blank it."""
+    pb = PaperBroker(state_dir=tmp_path, starting_cash=100_000.0)
+    for tk, pnl in [("MRVL", 6826.47), ("MS", -1844.75), ("NVDA", 431.0)]:
+        pb.ledger.record_open(ticker=tk, opened=f"2026-07-15T14:00:00{tk}",
+                              strategy="long_call", qty=1, cost_basis=1000, legs=[])
+        pb.ledger.record_close(ticker=tk, opened=f"2026-07-15T14:00:00{tk}",
+                               close_value=1000 + pnl, pnl=pnl, reason="x")
+    # wipe the working book (as corruption/reset would)
+    pb._positions = []
+    pb._cash = 100_000.0
+    assert pb.equity()["realized"] == pytest.approx(6826.47 - 1844.75 + 431.0, abs=0.01)
+
+
+def test_reconcile_restores_cash_from_ledger(tmp_path):
+    pb = PaperBroker(state_dir=tmp_path, starting_cash=100_000.0)
+    pb.ledger.record_open(ticker="MRVL", opened="o1", strategy="long_call",
+                          qty=1, cost_basis=1000, legs=[])
+    pb.ledger.record_close(ticker="MRVL", opened="o1", close_value=7826, pnl=6826.47, reason="target")
+    pb._positions.append(pb._pos_from_dict(_position_dict("MPC")))  # one open, basis 350
+    pb._cash = 100_000.0 - 350.0
+    out = pb.reconcile_from_ledger()
+    assert out["cash"] == pytest.approx(100_000.0 + 6826.47 - 350.0, abs=0.01)
+    assert out["reconciled_realized"] == pytest.approx(6826.47, abs=0.01)
+    # idempotent
+    assert pb.reconcile_from_ledger()["cash"] == pytest.approx(out["cash"], abs=0.01)

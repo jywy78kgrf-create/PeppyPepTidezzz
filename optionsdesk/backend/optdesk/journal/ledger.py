@@ -210,6 +210,25 @@ class Ledger:
                  "params": r[5], "holdout_score": r[6], "holdout_return": r[7]}
                 for r in rows]
 
+    def realized(self, since: Optional[str] = None) -> tuple[float, int]:
+        """Permanent cumulative realized P&L: (sum of closed-trade pnl, count).
+
+        This is the source of truth for realized P&L — it survives book resets
+        and file corruption. Optionally filtered to trades opened at/after
+        ``since`` (the account epoch)."""
+        clauses = ["closed IS NOT NULL", "pnl IS NOT NULL"]
+        params: list = []
+        if since:
+            clauses.append("opened >= ?")
+            params.append(since)
+        where = "WHERE " + " AND ".join(clauses)
+        rows = self._query(
+            f"SELECT COALESCE(SUM(pnl), 0), COUNT(*) FROM trades {where}",
+            tuple(params))
+        if not rows:
+            return 0.0, 0
+        return float(rows[0][0] or 0.0), int(rows[0][1] or 0)
+
     def stats(self) -> dict[str, Any]:
         def one(sql: str) -> int:
             rows = self._query(sql)
