@@ -72,6 +72,13 @@ class AutoConfig:
     ticker_cooldown_hr: float = 24.0
     profit_target: float = 0.50          # fraction of max profit to capture
     stop_mult: float = 1.0               # stop at 1x total position risk
+    # Long/debit structures (long_call, long_put, debit spreads, calendars):
+    # their "risk" IS the premium, so a 1x-risk stop sits at -100% (option
+    # worthless) and never fires before expiry — winners clip out at the profit
+    # target while losers bleed to zero. Give them a REAL stop at this fraction
+    # of premium instead. Credit/defined-risk structures keep the stop_mult
+    # rule (their risk is a move, not the premium).
+    long_stop_frac: float = 0.50
     close_dte: int = 7
 
     # self-protection
@@ -104,6 +111,7 @@ def _env_config() -> AutoConfig:
     # interval or last-run clock, so it can't re-arm itself after a restart.
     cfg.research_enabled = _flag("AUTO_RESEARCH", cfg.research_enabled)
     cfg.research_interval_hr = _num("AUTO_RESEARCH_HR", cfg.research_interval_hr, float)
+    cfg.long_stop_frac = _num("AUTO_LONG_STOP_FRAC", cfg.long_stop_frac, float)
     cfg.trade_interval_min = _num("AUTO_TRADE_MIN", cfg.trade_interval_min, int)
     cfg.daily_loss_limit_frac = _num("AUTO_DAY_LOSS_FRAC", cfg.daily_loss_limit_frac, float)
     cfg.min_holdout_score = _num("AUTO_MIN_HOLDOUT", cfg.min_holdout_score, float)
@@ -754,10 +762,14 @@ class AutoPilot:
         max_profit_total = (mp * qty) if (mp is not None and math.isfinite(mp) and mp > 0) \
             else total_risk
         min_expiry = min(leg.expiry for leg in spec.legs)
+        # Long/debit structures get a real stop at a fraction of premium; credit
+        # / defined-risk structures keep the -stop_mult x risk rule.
+        is_long_premium = spec.name not in self._SHORT_PREMIUM
+        stop_frac = self.cfg.long_stop_frac if is_long_premium else self.cfg.stop_mult
         return {
             "config_id": config_id,
             "target_upnl": round(self.cfg.profit_target * max_profit_total, 2),
-            "stop_upnl": round(-self.cfg.stop_mult * total_risk, 2),
+            "stop_upnl": round(-stop_frac * total_risk, 2),
             "close_by": (min_expiry - timedelta(days=self.cfg.close_dte)).isoformat(),
             "expiry": min_expiry.isoformat(),
             "unit_risk": round(unit_risk, 2),
@@ -775,7 +787,15 @@ class AutoPilot:
             pass
         if pos.upnl >= m.get("target_upnl", float("inf")):
             return "target"
-        if pos.upnl <= m.get("stop_upnl", float("-inf")):
+        # Recompute the stop for long/debit positions so the real (fraction-of-
+        # premium) stop applies to the WHOLE book — including positions opened
+        # before this rule existed, whose stored stop_upnl still sits at -100%.
+        stop = m.get("stop_upnl", float("-inf"))
+        if pos.spec_name not in self._SHORT_PREMIUM:
+            ur, n = m.get("unit_risk"), m.get("contracts")
+            if ur and n:
+                stop = -self.cfg.long_stop_frac * float(ur) * int(n)
+        if pos.upnl <= stop:
             return "stop"
         return None
 

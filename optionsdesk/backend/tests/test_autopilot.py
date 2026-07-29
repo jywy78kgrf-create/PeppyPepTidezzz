@@ -207,6 +207,43 @@ def test_exit_target_and_stop(tmp_path, upnl, expected):
     assert acts and expected in acts[0]["detail"]
 
 
+def _long_pos(spec_name: str, cost_basis: float, upnl: float) -> PaperPosition:
+    return PaperPosition(
+        ticker="MS", spec_name=spec_name, opened=datetime(2026, 7, 20, 14, 0),
+        legs=[], cost_basis=cost_basis, current_value=cost_basis + upnl,
+        upnl=upnl, status="OPEN")
+
+
+def test_long_call_stops_at_fraction_of_premium(tmp_path):
+    """A long call's real stop fires at ~50% of premium — not at -100% (option
+    worthless), which is where the old 1x-risk stop sat and never triggered."""
+    pilot = make_pilot(tmp_path, FakeBroker())
+    now = datetime(2026, 7, 29, 14, 0)
+    # premium $1,447 over 2 lots -> unit_risk 723.5; stored stop is the OLD
+    # -100% value, proving the dynamic recompute overrides it for the live book.
+    m = {"expiry": "2026-08-21", "close_by": "2026-08-14",
+         "target_upnl": 723.5, "stop_upnl": -1447.0,
+         "unit_risk": 723.5, "contracts": 2}
+    # -75% of premium -> past the 50% stop -> cut
+    assert pilot._exit_reason(_long_pos("long_call", 1447.0, -1086.0), m, now) == "stop"
+    # -40% of premium -> above the 50% stop -> held
+    assert pilot._exit_reason(_long_pos("long_call", 1447.0, -578.8), m, now) is None
+
+
+def test_short_premium_keeps_wide_risk_stop(tmp_path):
+    """Credit / defined-risk structures are NOT tightened — their risk is a
+    move, not a premium, so they keep the -stop_mult x risk stop."""
+    pilot = make_pilot(tmp_path, FakeBroker())
+    now = datetime(2026, 7, 29, 14, 0)
+    m = {"expiry": "2026-08-21", "close_by": "2026-08-14",
+         "target_upnl": 500.0, "stop_upnl": -2000.0,
+         "unit_risk": 1000.0, "contracts": 2}  # total risk 2000
+    # -60% of risk: a 50% *premium* stop would cut, but short premium keeps -1x
+    assert pilot._exit_reason(_long_pos("short_straddle", -1000.0, -1200.0), m, now) is None
+    # only past the full -1x risk stop does it fire
+    assert pilot._exit_reason(_long_pos("short_straddle", -1000.0, -2100.0), m, now) == "stop"
+
+
 def test_exit_close_dte(tmp_path):
     broker = FakeBroker()
     pilot = make_pilot(tmp_path, broker)
