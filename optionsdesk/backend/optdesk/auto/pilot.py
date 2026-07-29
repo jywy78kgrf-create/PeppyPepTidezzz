@@ -45,6 +45,7 @@ class AutoConfig:
     """Autopilot knobs. Conservative by default — this is a probe, not a bot
     trying to look busy."""
     trade_interval_min: int = 5          # manage/open cadence
+    research_enabled: bool = True        # master switch: False hard-parks research
     research_interval_hr: float = 6.0    # how often a research batch runs
     research_batch_tickers: int = 6      # tickers per research batch
     learn_iters: int = 6                 # learning-loop iterations per batch
@@ -93,6 +94,15 @@ def _env_config() -> AutoConfig:
                 pass
         return current
 
+    def _flag(name: str, current: bool) -> bool:
+        raw = os.getenv(name)
+        if raw is None or raw == "":
+            return current
+        return raw.strip().lower() not in {"0", "false", "off", "no", "n"}
+
+    # AUTO_RESEARCH=0 hard-parks research: the batch never runs regardless of
+    # interval or last-run clock, so it can't re-arm itself after a restart.
+    cfg.research_enabled = _flag("AUTO_RESEARCH", cfg.research_enabled)
     cfg.research_interval_hr = _num("AUTO_RESEARCH_HR", cfg.research_interval_hr, float)
     cfg.trade_interval_min = _num("AUTO_TRADE_MIN", cfg.trade_interval_min, int)
     cfg.daily_loss_limit_frac = _num("AUTO_DAY_LOSS_FRAC", cfg.daily_loss_limit_frac, float)
@@ -254,6 +264,7 @@ class AutoPilot:
             sum(r.get("n_trades") or 0 for r in cur["iterations"]))
         return {
             "enabled": enabled,
+            "research_enabled": bool(self.cfg.research_enabled),
             "current": cur,
             "last": last,
             "batches_done": cursor,
@@ -379,6 +390,8 @@ class AutoPilot:
         """Research heartbeat — run one batch if due. Long-running (minutes to
         tens of minutes), so it runs on a SEPARATE thread from ``tick`` and
         can't block trading. Non-reentrant via its own gate; never raises."""
+        if not self.cfg.research_enabled:
+            return  # hard-parked via AUTO_RESEARCH=0 — never runs a batch
         if not self._research_gate.acquire(blocking=False):
             return
         try:

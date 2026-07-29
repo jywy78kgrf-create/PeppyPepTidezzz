@@ -406,6 +406,43 @@ def test_research_tick_runs_research_only(tmp_path):
     assert broker.opened_specs == []
 
 
+def test_research_hard_park_blocks_batches(tmp_path):
+    """AUTO_RESEARCH=0 (research_enabled=False) hard-parks research: the tick
+    never runs a batch, regardless of interval or last-run clock — so it can't
+    re-arm itself after a restart. Trading is unaffected."""
+    broker = FakeBroker()
+    calls = []
+
+    def learn(s, t, st, e):
+        calls.append(1)
+        return good_learn(s, t, st, e)
+
+    cfg = AutoConfig(research_interval_hr=0, trade_interval_min=0,
+                     research_enabled=False)
+    pilot = make_pilot(tmp_path, broker, learn=learn, cfg=cfg)
+    pilot.enable()
+    pilot.research_tick()
+    assert calls == [], "parked research must not run a batch"
+    assert pilot.research_status()["research_enabled"] is False
+    # the trade cycle still works while research is parked
+    pilot.run_research_batch()          # manual call still allowed (explicit)
+    assert pilot._state["promoted"]
+    pilot.tick()
+    assert broker.opened_specs, "trading continues while research is parked"
+
+
+def test_research_enabled_flag_from_env(monkeypatch):
+    from optdesk.auto.pilot import _env_config
+    monkeypatch.setenv("AUTO_RESEARCH", "0")
+    assert _env_config().research_enabled is False
+    monkeypatch.setenv("AUTO_RESEARCH", "off")
+    assert _env_config().research_enabled is False
+    monkeypatch.setenv("AUTO_RESEARCH", "1")
+    assert _env_config().research_enabled is True
+    monkeypatch.delenv("AUTO_RESEARCH", raising=False)
+    assert _env_config().research_enabled is True  # default on
+
+
 def test_trade_tick_opens_promoted_without_waiting_on_research(tmp_path):
     """Once a config is promoted, the trade heartbeat opens it immediately —
     it does not wait behind a research batch."""

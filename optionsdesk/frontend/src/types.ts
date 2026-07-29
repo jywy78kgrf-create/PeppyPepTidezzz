@@ -298,6 +298,7 @@ export interface ResearchLast {
 
 export interface ResearchStatus {
   enabled: boolean
+  research_enabled?: boolean // false = hard-parked via AUTO_RESEARCH=0
   current: ResearchCurrent
   last: ResearchLast | null
   batches_done: number

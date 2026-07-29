@@ -46,7 +46,8 @@ export default function ResearchEngine() {
 
   if (!st) return null
   const cur = st.current
-  const active = cur.active
+  const parked = st.research_enabled === false
+  const active = cur.active && !parked
   const iters = cur.iterations ?? []
   const nIter = Math.max(cur.n_iter ?? 0, iters.length)
   const elapsed = active && cur.elapsed_s != null ? cur.elapsed_s + drift : null
@@ -76,13 +77,27 @@ export default function ResearchEngine() {
             RESEARCH ENGINE
           </span>
         </span>
-        {st.sweep_total > 0 && (
+        {parked ? (
           <span
-            className="num text-[8.5px] text-[var(--color-ink-faint)]"
-            title={`batch ${st.sweep_done} of ${st.sweep_total} in pass #${st.sweep_number} over every strategy × ticker batch`}
+            className="rounded-full border px-1.5 py-[1px] text-[8px] font-semibold tracking-[0.16em]"
+            style={{
+              color: 'var(--color-gold)',
+              borderColor: 'color-mix(in srgb, var(--color-gold) 45%, transparent)',
+              background: 'color-mix(in srgb, var(--color-gold) 10%, transparent)',
+            }}
+            title="Research is hard-parked (AUTO_RESEARCH=0). No new backtests will run. The paper desk keeps trading its promoted strategies."
           >
-            sweep {st.sweep_number} · {st.sweep_done}/{st.sweep_total}
+            PARKED
           </span>
+        ) : (
+          st.sweep_total > 0 && (
+            <span
+              className="num text-[8.5px] text-[var(--color-ink-faint)]"
+              title={`batch ${st.sweep_done} of ${st.sweep_total} in pass #${st.sweep_number} over every strategy × ticker batch`}
+            >
+              sweep {st.sweep_number} · {st.sweep_done}/{st.sweep_total}
+            </span>
+          )
         )}
       </div>
 
@@ -161,6 +176,13 @@ export default function ResearchEngine() {
             </span>
           </div>
         </>
+      ) : parked ? (
+        <div className="mt-1.5 text-[9px] leading-snug text-[var(--color-ink-dim)]">
+          Parked — no new backtests will run. The desk keeps trading its
+          promoted strategies; re-enable by removing{' '}
+          <span className="num text-[var(--color-gold)]">AUTO_RESEARCH=0</span> and
+          rebuilding.
+        </div>
       ) : st.last ? (
         <div className="mt-1.5 text-[9px] leading-snug text-[var(--color-ink-dim)]">
           <span className="font-semibold text-[var(--color-ink)]">
