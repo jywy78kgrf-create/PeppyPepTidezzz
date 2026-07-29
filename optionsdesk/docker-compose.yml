@@ -21,7 +21,9 @@ services:
       IBKR_HOST: ${IBKR_HOST:-host.docker.internal}
       IBKR_PORT: ${IBKR_PORT:-7497}
       # autopilot tuning (all optional; defaults are conservative)
+      AUTO_RESEARCH: ${AUTO_RESEARCH:-1}          # 0 hard-parks the research engine
       AUTO_RESEARCH_HR: ${AUTO_RESEARCH_HR:-6}
+      AUTO_LONG_STOP_FRAC: ${AUTO_LONG_STOP_FRAC:-0.5}  # long-option stop, fraction of premium
       AUTO_TRADE_MIN: ${AUTO_TRADE_MIN:-5}
       AUTO_DAY_LOSS_FRAC: ${AUTO_DAY_LOSS_FRAC:-0.03}
       AUTO_MIN_HOLDOUT: ${AUTO_MIN_HOLDOUT:-0.30}
