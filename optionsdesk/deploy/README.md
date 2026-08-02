@@ -16,6 +16,24 @@ Docker volume. A plain `git clone` on the server would miss all three.
 
 ---
 
+## 0. Keep it isolated from your other Hetzner projects
+
+If you run other live services on this Hetzner account (e.g. a production
+site), isolate ATLAS completely so setup can never touch them:
+
+- **Make a separate Hetzner Cloud *Project* for ATLAS** (console → project
+  switcher → **New Project**). A project has its own servers, firewalls, and
+  API tokens — your other services aren't even visible inside it, so you can't
+  fat-finger them.
+- **Give ATLAS its own server** (step 1) — never co-host it on a box that runs
+  a live service. The desk's dashboard has no login; it must not share a
+  machine with anything that matters.
+- **Give ATLAS its own firewall** (step 2) — never edit an existing service's
+  firewall.
+
+Separate VMs are fully isolated (own CPU/disk/IP/network), so nothing ATLAS
+does can reach another server. The only shared thing is your account/billing.
+
 ## 1. Create the server (Hetzner Cloud console)
 
 1. **Add Server** → Location: pick one near you (US East/West or Germany).
