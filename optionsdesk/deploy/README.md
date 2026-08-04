@@ -136,8 +136,11 @@ From now on the server is the single source of truth. The Mac can sleep.
 ## Updating later (when I push a fix)
 
 Two options:
-- **Simple:** re-run the step-4a `rsync`, then on the server
-  `docker compose up -d --build`.
+- **Simple:** on the Mac, `git pull` then re-run the step-4a `rsync` **but add
+  `--exclude '.env'`** so the server keeps its own `.env` (the one with the
+  fixed `MERIDIAN_DATA` and `AUTO_RESEARCH=0`). Then on the server
+  `docker compose up -d --build`. (rsync is incremental — it skips the
+  unchanged `data/chains`, so only the changed code moves.)
 - **Cleaner (`git pull` on the server):** create a GitHub *fine-grained,
   read-only* token for this repo, then on the server
   `git remote set-url origin https://<TOKEN>@github.com/jywy78kgrf-create/peppypeptidezzz.git`
