@@ -636,6 +636,17 @@ def auto_research() -> dict:
     return serialize(get_pilot().research_status())
 
 
+@app.post("/api/auto/repromote")
+def auto_repromote(strategy: str | None = Query(
+        None, description="only this strategy, e.g. long_call; omit for all demoted")) -> dict:
+    """Re-promote demoted strategy configs, giving them a fresh evaluation
+    window under the current (P&L-aware) demotion rules. Use after a strategy
+    was benched on a variance streak rather than genuine underperformance."""
+    from ..auto import get_pilot
+
+    return serialize(get_pilot().reactivate_configs(strategy=strategy))
+
+
 @app.post("/api/auto/reset")
 def auto_reset(resume: bool = Query(True)) -> dict:
     """Start the forward test fresh: flat paper book, cash restored, equity

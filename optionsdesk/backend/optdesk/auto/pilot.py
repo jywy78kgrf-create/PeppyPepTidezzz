@@ -83,7 +83,14 @@ class AutoConfig:
 
     # self-protection
     daily_loss_limit_frac: float = 0.03  # trip breaker at -3% on the day
-    demote_after_losses: int = 3         # consecutive losing closes -> demote
+    # Demotion benches a promoted strategy on GENUINE underperformance, not a
+    # normal cold streak. A high win-rate, positive-expectancy strategy strings
+    # a few losses together by chance — demoting on raw loss-count benches your
+    # winners for variance. So judge on P&L health first, with a long
+    # consecutive-loss run only as a backstop.
+    demote_after_losses: int = 6         # consecutive-loss BACKSTOP (was 3)
+    demote_drawdown_frac: float = 0.5    # give back > this fraction of peak realized -> demote
+    demote_min_trades: int = 4           # don't judge a config until this many closes
 
 
 def _env_config() -> AutoConfig:
@@ -112,6 +119,8 @@ def _env_config() -> AutoConfig:
     cfg.research_enabled = _flag("AUTO_RESEARCH", cfg.research_enabled)
     cfg.research_interval_hr = _num("AUTO_RESEARCH_HR", cfg.research_interval_hr, float)
     cfg.long_stop_frac = _num("AUTO_LONG_STOP_FRAC", cfg.long_stop_frac, float)
+    cfg.demote_after_losses = _num("AUTO_DEMOTE_LOSSES", cfg.demote_after_losses, int)
+    cfg.demote_drawdown_frac = _num("AUTO_DEMOTE_DD_FRAC", cfg.demote_drawdown_frac, float)
     cfg.trade_interval_min = _num("AUTO_TRADE_MIN", cfg.trade_interval_min, int)
     cfg.daily_loss_limit_frac = _num("AUTO_DAY_LOSS_FRAC", cfg.daily_loss_limit_frac, float)
     cfg.min_holdout_score = _num("AUTO_MIN_HOLDOUT", cfg.min_holdout_score, float)
@@ -800,31 +809,74 @@ class AutoPilot:
         return None
 
     def _settle_config(self, config_id: Optional[str], pnl: float) -> None:
-        """Feed a realized close back into its config; demote persistent losers."""
+        """Feed a realized close back into its config; demote genuine losers.
+
+        Demotion fires on P&L health, not a raw loss streak: a strategy that is
+        net-negative, or that has given back more than ``demote_drawdown_frac``
+        of its peak realized P&L, is benched. A long run of consecutive losses
+        is only a backstop. This stops a positive-expectancy, high-win-rate
+        strategy from being benched for normal variance (the reason long_call
+        got retired after the stop-loss change booked a few losses in a row)."""
         for cfgp in self._state["promoted"]:
             if cfgp["id"] != config_id:
                 continue
             cfgp["realized_pnl"] = round(cfgp.get("realized_pnl", 0.0) + pnl, 2)
             cfgp["closed_trades"] = cfgp.get("closed_trades", 0) + 1
-            if pnl < 0:
-                cfgp["consecutive_losses"] = cfgp.get("consecutive_losses", 0) + 1
-                if cfgp["consecutive_losses"] >= self.cfg.demote_after_losses:
-                    cfgp["active"] = False
-                    try:
-                        from ..journal import get_ledger
-                        get_ledger(self._state_path.parent / "ledger.db"
-                                   ).record_promotion(
-                            ts=self.now_fn().isoformat(), action="demoted",
-                            config=cfgp)
-                    except Exception:  # noqa: BLE001
-                        pass
-                    self._log("demote", f"{cfgp['strategy']} demoted after "
-                                        f"{cfgp['consecutive_losses']} consecutive "
-                                        f"losing closes (realized "
-                                        f"{cfgp['realized_pnl']:+.2f})")
-            else:
-                cfgp["consecutive_losses"] = 0
+            cfgp["peak_realized"] = round(
+                max(cfgp.get("peak_realized", 0.0), cfgp["realized_pnl"]), 2)
+            cfgp["consecutive_losses"] = (
+                cfgp.get("consecutive_losses", 0) + 1 if pnl < 0 else 0)
+
+            n = cfgp["closed_trades"]
+            rz = cfgp["realized_pnl"]
+            peak = cfgp["peak_realized"]
+            reason = None
+            if n >= self.cfg.demote_min_trades:
+                if rz < 0:
+                    reason = f"net loss {rz:+.0f} over {n} closes"
+                elif peak > 0 and (peak - rz) >= self.cfg.demote_drawdown_frac * peak:
+                    reason = (f"gave back {peak - rz:+.0f} of {peak:+.0f} peak "
+                              f"(> {self.cfg.demote_drawdown_frac:.0%} drawdown)")
+            if reason is None and cfgp["consecutive_losses"] >= self.cfg.demote_after_losses:
+                reason = f"{cfgp['consecutive_losses']} consecutive losing closes"
+
+            if reason and cfgp.get("active", True):
+                cfgp["active"] = False
+                try:
+                    from ..journal import get_ledger
+                    get_ledger(self._state_path.parent / "ledger.db").record_promotion(
+                        ts=self.now_fn().isoformat(), action="demoted", config=cfgp)
+                except Exception:  # noqa: BLE001
+                    pass
+                self._log("demote", f"{cfgp['strategy']} demoted — {reason} "
+                                    f"(realized {rz:+.2f})")
             return
+
+    def reactivate_configs(self, strategy: Optional[str] = None) -> dict:
+        """Re-promote demoted configs (optionally only one strategy) for a fresh
+        evaluation window under the current demotion rules: sets ``active``,
+        clears the loss streak, and re-bases the drawdown high-water mark to the
+        config's current realized P&L (so it's judged from here forward)."""
+        reactivated: list[str] = []
+        with self._lock:
+            for cfgp in self._state["promoted"]:
+                if cfgp.get("active", True):
+                    continue
+                if strategy and cfgp.get("strategy") != strategy:
+                    continue
+                cfgp["active"] = True
+                cfgp["consecutive_losses"] = 0
+                cfgp["peak_realized"] = cfgp.get("realized_pnl", 0.0)
+                reactivated.append(cfgp.get("strategy"))
+                try:
+                    from ..journal import get_ledger
+                    get_ledger(self._state_path.parent / "ledger.db").record_promotion(
+                        ts=self.now_fn().isoformat(), action="promoted", config=cfgp)
+                except Exception:  # noqa: BLE001
+                    pass
+                self._log("promote", f"{cfgp['strategy']} re-promoted (manual)")
+            self._save()
+        return {"reactivated": len(reactivated), "strategies": reactivated}
 
     def _on_cooldown(self, ticker: str, now: datetime) -> bool:
         last = self._state["last_opened"].get(ticker)

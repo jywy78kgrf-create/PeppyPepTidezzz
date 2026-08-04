@@ -296,6 +296,68 @@ def test_demotion_after_consecutive_losses(tmp_path):
     assert promoted["closed_trades"] == 2
 
 
+def _add_promoted(pilot, cid="c1", strategy="long_call"):
+    cfg = {"id": cid, "strategy": strategy, "tickers": ["AAA"], "params": {},
+           "holdout_score": 1.0, "holdout_return": 0.05,
+           "promoted_at": "2026-07-01T00:00:00", "realized_pnl": 0.0,
+           "closed_trades": 0, "consecutive_losses": 0, "peak_realized": 0.0,
+           "active": True}
+    pilot._state["promoted"].append(cfg)
+    return cfg
+
+
+def test_no_demote_on_normal_cold_streak(tmp_path):
+    """A net-positive strategy with a few losses in a row is NOT benched — that
+    variance is normal for a high-win-rate edge (the long_call bug)."""
+    pilot = make_pilot(tmp_path, FakeBroker())
+    c = _add_promoted(pilot)
+    for pnl in [1000, 1000, 1000, 1000, 1000]:   # peak +5000
+        pilot._settle_config("c1", pnl)
+    for pnl in [-300, -300, -300]:               # give back 900 = 18% of peak
+        pilot._settle_config("c1", pnl)
+    assert c["active"] is True
+    assert c["consecutive_losses"] == 3          # streak tracked, but < backstop(6)
+
+
+def test_demote_on_drawdown_from_peak(tmp_path):
+    """A strategy that gives back > half its peak gains IS benched, even while
+    still net positive."""
+    pilot = make_pilot(tmp_path, FakeBroker())
+    c = _add_promoted(pilot)
+    for pnl in [2000, 2000]:                      # peak +4000
+        pilot._settle_config("c1", pnl)
+    for pnl in [-1100, -1100]:                    # realized 1800; gave back 2200 = 55%
+        pilot._settle_config("c1", pnl)
+    assert c["active"] is False
+    assert c["realized_pnl"] > 0                  # demoted despite being net positive
+
+
+def test_demote_on_net_loss(tmp_path):
+    """A strategy that is net-negative over enough closes is benched."""
+    pilot = make_pilot(tmp_path, FakeBroker())
+    c = _add_promoted(pilot)
+    for pnl in [200, -500, -500, -500]:           # 4 closes, realized -1300
+        pilot._settle_config("c1", pnl)
+    assert c["active"] is False
+
+
+def test_reactivate_repromotes_and_rebases(tmp_path):
+    pilot = make_pilot(tmp_path, FakeBroker())
+    c = _add_promoted(pilot)
+    for pnl in [200, -500, -500, -500]:
+        pilot._settle_config("c1", pnl)
+    assert c["active"] is False
+    out = pilot.reactivate_configs(strategy="long_call")
+    assert out == {"reactivated": 1, "strategies": ["long_call"]}
+    assert c["active"] is True
+    assert c["consecutive_losses"] == 0
+    assert c["peak_realized"] == c["realized_pnl"]   # drawdown re-based to now
+    # a non-matching strategy filter reactivates nothing
+    c["active"] = False
+    assert pilot.reactivate_configs(strategy="short_straddle")["reactivated"] == 0
+    assert c["active"] is False
+
+
 def test_state_persists_across_instances(tmp_path):
     broker = FakeBroker()
     pilot = make_pilot(tmp_path, broker)
