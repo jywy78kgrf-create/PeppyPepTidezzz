@@ -215,9 +215,12 @@ def _long_pos(spec_name: str, cost_basis: float, upnl: float) -> PaperPosition:
 
 
 def test_long_call_stops_at_fraction_of_premium(tmp_path):
-    """A long call's real stop fires at ~50% of premium — not at -100% (option
-    worthless), which is where the old 1x-risk stop sat and never triggered."""
-    pilot = make_pilot(tmp_path, FakeBroker())
+    """When the fraction-of-premium stop is ENABLED (it's off by default), a
+    long call is cut at that fraction. Kept as a mechanism test — a 2021-2026
+    backtest showed the tight stop hurts long options, so the default is off."""
+    cfg = AutoConfig(research_interval_hr=0, trade_interval_min=0,
+                     long_stop_frac=0.5)
+    pilot = make_pilot(tmp_path, FakeBroker(), cfg=cfg)
     now = datetime(2026, 7, 29, 14, 0)
     # premium $1,447 over 2 lots -> unit_risk 723.5; stored stop is the OLD
     # -100% value, proving the dynamic recompute overrides it for the live book.

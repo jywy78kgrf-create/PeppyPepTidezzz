@@ -72,13 +72,16 @@ class AutoConfig:
     ticker_cooldown_hr: float = 24.0
     profit_target: float = 0.50          # fraction of max profit to capture
     stop_mult: float = 1.0               # stop at 1x total position risk
-    # Long/debit structures (long_call, long_put, debit spreads, calendars):
-    # their "risk" IS the premium, so a 1x-risk stop sits at -100% (option
-    # worthless) and never fires before expiry — winners clip out at the profit
-    # target while losers bleed to zero. Give them a REAL stop at this fraction
-    # of premium instead. Credit/defined-risk structures keep the stop_mult
-    # rule (their risk is a move, not the premium).
-    long_stop_frac: float = 0.50
+    # Long/debit stop as a fraction of premium. DEFAULT 2.0 = effectively OFF
+    # (>100% of premium can't happen, so it never fires — long options ride to
+    # their exit, loss bounded at premium). A tight fraction-of-premium stop
+    # SEEMS prudent ("cut the losers") but a 2021-2026 backtest showed it makes
+    # long calls WORSE across regimes (-62% vs -52%): long options are already
+    # bounded-risk and convex, so an early stop just books recoverable losses
+    # plus round-trip costs and forfeits the occasional big winner. Left as a
+    # tunable knob (AUTO_LONG_STOP_FRAC) but off by default. Credit/defined-risk
+    # structures are unaffected — they use the stop_mult rule.
+    long_stop_frac: float = 2.0
     close_dte: int = 7
 
     # self-protection
