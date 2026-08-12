@@ -591,8 +591,15 @@ class PaperBroker:
         """All persisted equity snapshots, oldest first."""
         return [dict(p) for p in self._history]
 
-    def close(self, idx: int, reason: str = "manual") -> PaperPosition:
-        """Close the position at ``idx`` at its last-marked liquidation value."""
+    def close(self, idx: int, reason: str = "manual",
+              floor: Optional[float] = None) -> PaperPosition:
+        """Close the position at ``idx`` at its last-marked liquidation value.
+
+        ``floor`` (optional) is a minimum realistic liquidation value — e.g. a
+        long option's intrinsic value net of exit costs. A stored mark BELOW the
+        floor is stale/bad, so we realise the floor instead of booking a phantom
+        loss. This is the guard for the bug where a deep-ITM call was closed for
+        far less than its intrinsic off a months-old historical mark."""
         if idx < 0 or idx >= len(self._positions):
             raise IndexError(f"position index {idx} out of range")
         pos = self._positions[idx]
@@ -604,6 +611,8 @@ class PaperBroker:
         # the mid mark only if the position was never marked live/historically.
         proceeds = (pos.liquidation_value
                     if pos.liquidation_value is not None else pos.current_value)
+        if floor is not None and proceeds < float(floor):
+            proceeds = float(floor)  # never realise below intrinsic (stale mark)
         self._cash += proceeds
         pos.current_value = round(proceeds, 4)
         pos.status = "CLOSED"

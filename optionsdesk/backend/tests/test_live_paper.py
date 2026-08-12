@@ -324,6 +324,34 @@ def test_liquidation_value_survives_reload(tmp_path, monkeypatch):
     assert pb2.positions()[0].liquidation_value == pytest.approx(liq)
 
 
+def test_close_marks_live_not_stale_store(tmp_path, monkeypatch):
+    """The close endpoint re-marks from LIVE AV, not the frozen historical
+    store — the bug that booked a deep-ITM winner as a loss off a months-old
+    store price. AAPL legs match _AV_PAYLOAD -> live liquidation 368.80."""
+    import optdesk.live.market_hours as mh
+    monkeypatch.setattr(mh, "market_open", lambda now=None: True)
+    monkeypatch.setattr(httpx, "get", _fake_get(_AV_PAYLOAD))
+    _broker_with_position(tmp_path)
+    client = _client(tmp_path, monkeypatch, AlphaVantage(key="k"))
+    r = client.post("/api/paper/close", json={"idx": 0})
+    assert r.status_code == 200, r.text
+    pnl = r.json()["position"]["upnl"]
+    assert pnl == pytest.approx(368.80 - 350.0, abs=0.5)  # live, not stale/flat
+
+
+def test_close_floors_at_intrinsic(tmp_path):
+    """A stale mark below intrinsic must never be realized: close() books the
+    provided floor instead of a phantom loss (the MPC deep-ITM bug)."""
+    pb = _broker_with_position(tmp_path)
+    pos = pb.positions()[0]
+    pos.liquidation_value = -4000.0   # stale/garbage mark
+    pos.current_value = -4000.0
+    cash0 = pb.equity()["cash"]
+    closed = pb.close(0, floor=900.0)
+    assert closed.upnl == pytest.approx(900.0 - 350.0, abs=0.01)   # basis 350
+    assert pb.equity()["cash"] == pytest.approx(cash0 + 900.0, abs=0.01)
+
+
 # --------------------------------------------------------------------------- #
 # 3. History snapshots — append, throttle, force, persistence
 # --------------------------------------------------------------------------- #

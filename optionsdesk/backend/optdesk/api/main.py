@@ -501,12 +501,60 @@ def paper_open(req: PaperOpenRequest) -> dict:
     return {"position": serialize(pos), "equity": pb.equity()}
 
 
+def _intrinsic_floor(pb, idx: int, av) -> float | None:
+    """Minimum realistic liquidation value for an ALL-LONG option position
+    (long_call / long_put / long_strangle): a long option is worth at least its
+    intrinsic value. Returns None when the position has any short leg (floor
+    unsafe), the underlying can't be priced, or the position is out-of-the-money
+    — so the caller just uses the live mark. Never raises."""
+    try:
+        positions = pb.positions()
+        if idx < 0 or idx >= len(positions):
+            return None
+        pos = positions[idx]
+        legs = pos.legs or []
+        if not legs or any(str(ls.get("action")).upper() == "SELL" for ls in legs):
+            return None
+        q = av.quote(pos.ticker)
+        spot = float(q.get("price") or 0.0) if isinstance(q, dict) else 0.0
+        if spot <= 0:
+            return None
+        intrinsic = 0.0
+        contracts = 0
+        for ls in legs:
+            strike = float(ls["strike"])
+            qty = abs(int(ls["quantity"]))
+            contracts += qty
+            if str(ls["kind"]).upper().startswith("C"):
+                intrinsic += max(0.0, spot - strike) * qty * 100.0
+            else:
+                intrinsic += max(0.0, strike - spot) * qty * 100.0
+        if intrinsic <= 0:
+            return None
+        exit_cost = contracts * (pb.cost.commission_per_contract
+                                 + pb.cost.exchange_fee_per_contract)
+        return round(intrinsic - exit_cost, 2)
+    except Exception:  # noqa: BLE001 - floor is best-effort, never block a close
+        return None
+
+
 @app.post("/api/paper/close")
 def paper_close(req: PaperCloseRequest) -> dict:
     pb = _paper()
-    pb.mark(store())
+    av = _alpha_vantage()
+    # Mark LIVE before realizing — NEVER close off the frozen historical store.
+    # (That priced a deep-ITM call at its months-old value and booked a real
+    # winner as a loss.) Fall back to the store only if live marking is down.
     try:
-        pos = pb.close(req.idx)
+        pb.mark_live(av, store=store())
+    except Exception:  # noqa: BLE001
+        try:
+            pb.mark(store())
+        except Exception:  # noqa: BLE001
+            pass
+    floor = _intrinsic_floor(pb, req.idx, av)
+    try:
+        pos = pb.close(req.idx, floor=floor)
     except IndexError as exc:
         raise HTTPException(404, str(exc)) from exc
     return {"position": serialize(pos), "equity": pb.equity()}
