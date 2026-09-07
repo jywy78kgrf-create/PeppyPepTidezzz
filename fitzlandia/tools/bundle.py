@@ -8,6 +8,7 @@ html = open(os.path.join(root, 'index.html'), encoding='utf-8').read()
 css = open(os.path.join(root, 'style.css'), encoding='utf-8').read()
 html = html.replace('<link rel="stylesheet" href="style.css">', '<style>\n' + css + '\n</style>')
 html = re.sub(r'<link rel="apple-touch-icon"[^>]*>\n?', '', html)
+html = re.sub(r'<link rel="icon".*\n', '', html)
 html = html.replace('<script src="vendor/three.min.js"></script>\n<script>if(!window.THREE){document.write(\'<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.158.0/three.min.js"><\\/script>\')}</script>',
                     '<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.158.0/three.min.js"></script>')
 def inline(m):
