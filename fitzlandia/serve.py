@@ -2,8 +2,30 @@
 """FitzLandia LAN server.  Run:  python3 serve.py   then open the printed URL on the iPad."""
 import http.server, socket, socketserver, os, sys, functools
 
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
+# Default is an uncommon high port so it never collides with other apps.
+# If it is somehow busy, the next free port from the list is used.
+PREFERRED = [47321, 47322, 47323, 47324, 47325]
 ROOT = os.path.dirname(os.path.abspath(__file__))
+
+def port_free(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("0.0.0.0", port))
+            return True
+        except OSError:
+            return False
+
+def pick_port():
+    if len(sys.argv) > 1:
+        return int(sys.argv[1])
+    for p in PREFERRED:
+        if port_free(p):
+            return p
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:  # let the OS choose
+        s.bind(("0.0.0.0", 0))
+        return s.getsockname()[1]
+
+PORT = pick_port()
 
 def lan_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

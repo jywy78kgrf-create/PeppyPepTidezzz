@@ -17,7 +17,9 @@ No install, no build step: it is a single web page (Three.js) that runs in Safar
    (Python 3 is already on every Mac. On Windows install it from python.org, or run
    `npx serve .` instead.)
 
-2. The terminal prints something like `http://192.168.1.23:8000`.
+2. The terminal prints something like `http://192.168.1.23:47321`.
+   (It uses port 47321, an uncommon port nothing else uses. If that port is ever busy it
+   automatically picks the next free one and prints that instead.)
    On the iPad, connected to the **same wifi**, open Safari and type that address.
 
 3. Optional but recommended: tap **Share → Add to Home Screen** on the iPad.
