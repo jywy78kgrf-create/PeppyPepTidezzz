@@ -11,10 +11,13 @@ const PIECES = {
   left:     { name: 'Turn Left',  icon: '↩️', cost: 15, dl: 0,  turn: -1 },
   right:    { name: 'Turn Right', icon: '↪️', cost: 15, dl: 0,  turn: 1 },
   lift:     { name: 'Chain Lift', icon: '⛓️', cost: 30, dl: 1,  turn: 0, lift: true },
+  loop:     { name: 'Loop',       icon: '➰', cost: 80, dl: 0,  turn: 0, cells: 1, hgt: 3, inversion: true, minSpeed: 12, samples: 56 },
+  corkscrew:{ name: 'Corkscrew',  icon: '🌪️', cost: 70, dl: 0,  turn: 0, cells: 2, hgt: 2, inversion: true, minSpeed: 9,  samples: 44 },
   conveyor: { name: 'Conveyor',   icon: '🔼', cost: 30, dl: 1,  turn: 0, lift: true, water: true },
   splash:   { name: 'Splash Pool',icon: '💦', cost: 40, dl: 0,  turn: 0, splash: true, water: true },
 };
-const COASTER_PIECES = ['lift', 'straight', 'up', 'down', 'bigdrop', 'left', 'right'];
+const COASTER_PIECES = ['lift', 'straight', 'up', 'down', 'bigdrop', 'left', 'right', 'loop', 'corkscrew'];
+const LOOP_R = 2.6, LOOP_A = 2.0, CORK_R = 1.5;
 const WATER_PIECES = ['conveyor', 'straight', 'up', 'down', 'bigdrop', 'left', 'right', 'splash'];
 
 // Physics rules (the "laws of FitzLandia")
@@ -51,8 +54,9 @@ class Ride {
   get water() { return this.type === 'water'; }
   get palette() { return this.water ? WATER_PIECES : COASTER_PIECES; }
   exitOf(p) {
-    const def = PIECES[p.type]; const h2 = (p.h + def.turn + 4) % 4; const d = DIRS[h2];
-    return { cx: p.cx + d.x, cz: p.cz + d.z, h: h2, l: p.l1 };
+    const def = PIECES[p.type]; const h2 = (p.h + def.turn + 4) % 4; const d = DIRS[h2]; const n = def.cells || 1;
+    const d0 = DIRS[p.h];
+    return { cx: p.cx + d0.x * (n - 1) + d.x, cz: p.cz + d0.z * (n - 1) + d.z, h: h2, l: p.l1 };
   }
   get cursor() { return this.exitOf(this.pieces[this.pieces.length - 1]); }
   get closed() {
@@ -70,9 +74,14 @@ class Ride {
     if (l1 < 0) return { ok: false, reason: "Can't go underground! ⛏️ Try a flat or up piece" };
     if (l1 > MAX_LEVEL) return { ok: false, reason: `Too high! Max height is ${MAX_LEVEL} 🏔️` };
     if (def.splash && c.l !== 0) return { ok: false, reason: 'Splash Pools must be on the ground (height 0) 💦' };
+    if (l1 + (def.hgt || 0) > MAX_LEVEL) return { ok: false, reason: `Too high for a ${def.name}! Max height is ${MAX_LEVEL} 🏔️` };
     const s = this.station;
-    if (c.cx === s.cx && c.cz === s.cz) return { ok: false, reason: 'That is the Station cell — line up with its arrow to finish ➡️🏠' };
-    if (occupiedFn(c.cx, c.cz, Math.min(c.l, l1), Math.max(c.l, l1), this, -1)) return { ok: false, reason: 'Something is in the way! Go higher, or turn 🚧' };
+    const probe = { type, cx: c.cx, cz: c.cz, h: c.h, l0: c.l, l1 };
+    for (const [x, z] of Ride.pieceCells(probe)) {
+      if (!inPark(x, z)) return { ok: false, reason: `No room for a ${def.name} here — it needs ${def.cells || 1} cell${def.cells > 1 ? 's' : ''} inside the park 🚧` };
+      if (x === s.cx && z === s.cz) return { ok: false, reason: 'That is the Station cell — line up with its arrow to finish ➡️🏠' };
+      if (occupiedFn(x, z, Math.min(c.l, l1), Math.max(c.l, l1) + (def.hgt || 0), this, -1)) return { ok: false, reason: 'Something is in the way! Go higher, or turn 🚧' };
+    }
     return { ok: true };
   }
   add(type) {
@@ -82,43 +91,61 @@ class Ride {
   undo() { if (this.pieces.length > 1) return this.pieces.pop(); return null; }
 
   // ---------- geometry ----------
-  /** Local xz + tangent for a piece at t in [0,1]. */
-  static xzAt(p, t, out, tangent) {
+  /** Cells a piece occupies: [[cx,cz],...] */
+  static pieceCells(p) { const d = DIRS[p.h]; const n = PIECES[p.type].cells || 1; const out = []; for (let k = 0; k < n; k++) out.push([p.cx + d.x * k, p.cz + d.z * k]); return out; }
+  static pieceCenter(p) { const cells = Ride.pieceCells(p); const c = new THREE.Vector3(); for (const [x, z] of cells) c.add(cellCenter(x, z)); return c.multiplyScalar(1 / cells.length); }
+  /** World position (without Hermite height) + up-hint for a piece at t in [0,1]. */
+  static shapeAt(p, t, out, hint) {
     const d = DIRS[p.h], def = PIECES[p.type]; const C = cellCenter(p.cx, p.cz);
-    const r = CELL / 2;
-    if (def.turn === 0) {
-      out.set(C.x + d.x * (t - 0.5) * CELL, 0, C.z + d.z * (t - 0.5) * CELL);
-      if (tangent) tangent.set(d.x, 0, d.z);
-    } else {
+    const r = CELL / 2; const S = { x: -d.z, z: d.x }; // right-hand side
+    hint.set(0, 1, 0);
+    if (def.turn !== 0) {
       const sx = def.turn < 0 ? d.z : -d.z, sz = def.turn < 0 ? -d.x : d.x; // side (left or right)
       const ex = C.x - d.x * r, ez = C.z - d.z * r;                             // entry point
       const ox = ex + sx * r, oz = ez + sz * r;                                // arc center
       const th = t * Math.PI / 2, cs = Math.cos(th), sn = Math.sin(th);
-      out.set(ox - sx * r * cs + d.x * r * sn, 0, oz - sz * r * cs + d.z * r * sn);
-      if (tangent) tangent.set(sx * sn + d.x * cs, 0, sz * sn + d.z * cs);
+      return out.set(ox - sx * r * cs + d.x * r * sn, 0, oz - sz * r * cs + d.z * r * sn);
     }
-    return out;
+    const ex = C.x - d.x * r, ez = C.z - d.z * r; // entry point
+    let along, side = 0, y = 0;
+    const smooth = u => u * u * (3 - 2 * u);
+    if (p.type === 'loop') {
+      const R = LOOP_R, A = LOOP_A;
+      if (t < 0.12) { const u = t / 0.12; along = u * r; side = -A / 2 * smooth(u); }
+      else if (t < 0.88) { const th = (t - 0.12) / 0.76 * Math.PI * 2; along = r + R * Math.sin(th); y = R * (1 - Math.cos(th)); side = -A / 2 + A * (th / (Math.PI * 2));
+        hint.set(-d.x * Math.sin(th), Math.cos(th), -d.z * Math.sin(th)); }
+      else { const u = (t - 0.88) / 0.12; along = r + u * r; side = A / 2 * (1 - smooth(u)); }
+    } else if (p.type === 'corkscrew') {
+      const L = CELL * 2, ph = t * Math.PI * 2;
+      along = t * L; y = CORK_R * (1 - Math.cos(ph)); side = CORK_R * Math.sin(ph);
+      hint.set(-S.x * Math.sin(ph), Math.cos(ph), -S.z * Math.sin(ph));
+    } else {
+      along = t * CELL * (def.cells || 1);
+    }
+    return out.set(ex + d.x * along + S.x * side, y, ez + d.z * along + S.z * side);
   }
-  static pieceLen(p) { return PIECES[p.type].turn ? Math.PI * CELL / 4 : CELL; }
+  static pieceLen(p) { const def = PIECES[p.type]; return def.turn ? Math.PI * CELL / 4 : CELL * (def.cells || 1); }
 
   /** Sample the whole track. Returns {pts, frames, s, piece, total} */
   buildPath() {
-    const P = this.pieces, n = P.length, N = 10;
+    const P = this.pieces, n = P.length;
     const slopes = P.map(p => PIECES[p.type].dl * RISE / Ride.pieceLen(p));
-    const pts = [], pieceIdx = [];
+    const pts = [], pieceIdx = [], hints = [];
     const closed = this.closed;
     for (let i = 0; i < n; i++) {
-      const p = P[i], L = Ride.pieceLen(p);
+      const p = P[i], L = Ride.pieceLen(p), def = PIECES[p.type], N = def.samples || 10;
       const y0 = p.l0 * RISE, y1 = p.l1 * RISE;
       const mPrev = i > 0 ? slopes[i - 1] : (closed ? slopes[n - 1] : slopes[i]);
       const mNext = i < n - 1 ? slopes[i + 1] : (closed ? slopes[0] : slopes[i]);
-      const m0 = (mPrev + slopes[i]) / 2, m1 = (slopes[i] + mNext) / 2;
+      let m0 = (mPrev + slopes[i]) / 2, m1 = (slopes[i] + mNext) / 2;
+      if (def.inversion) { m0 = 0; m1 = 0; }
       const last = (i === n - 1 && !closed) ? N + 1 : N;
       for (let k = 0; k < last; k++) {
         const t = k / N, t2 = t * t, t3 = t2 * t;
         const y = (2 * t3 - 3 * t2 + 1) * y0 + (t3 - 2 * t2 + t) * L * m0 + (-2 * t3 + 3 * t2) * y1 + (t3 - t2) * L * m1;
-        const v = Ride.xzAt(p, t, new THREE.Vector3()); v.y = y + 0.4;
-        pts.push(v); pieceIdx.push(i);
+        const hint = new THREE.Vector3();
+        const v = Ride.shapeAt(p, t, new THREE.Vector3(), hint); v.y += y + 0.4;
+        pts.push(v); pieceIdx.push(i); hints.push(hint);
       }
     }
     // frames + arc length
@@ -129,7 +156,7 @@ class Ride {
       if (!closed && (i === 0 || i === M - 1)) t = i === 0 ? pts[1].clone().sub(pts[0]) : pts[M - 1].clone().sub(pts[M - 2]);
       else t = b.clone().sub(a);
       t.normalize();
-      const nrm = new THREE.Vector3().crossVectors(UP, t).normalize();
+      const nrm = new THREE.Vector3().crossVectors(hints[i], t).normalize();
       const bn = new THREE.Vector3().crossVectors(t, nrm).normalize();
       frames.push({ p: pts[i], t, n: nrm, b: bn });
       if (i > 0) s.push(s[i - 1] + pts[i].distanceTo(pts[i - 1]));
@@ -204,7 +231,7 @@ class Ride {
     ties.count = ti; ties.castShadow = true; this.group.add(ties);
     // supports
     const sup = [];
-    for (let i = 0; i < F.length; i += 5) { const f = F[i]; if (f.p.y > 0.9) sup.push(f); }
+    for (let i = 0; i < F.length;) { const f = F[i]; const inv = PIECES[this.pieces[path.piece[i]].type].inversion; if (f.p.y > 0.9 && f.b.y > (inv ? 0.15 : 0.45)) sup.push(f); i += inv ? 3 : 5; }
     if (sup.length) {
       const supGeo = new THREE.CylinderGeometry(0.16, 0.2, 1, 8); supGeo.translate(0, 0.5, 0);
       const supports = new THREE.InstancedMesh(supGeo, steel, sup.length * (this.water ? 2 : 1));
@@ -250,9 +277,9 @@ class Ride {
     // mark a piece with a red glowing ring
     const old = this.group.getObjectByName('failRing'); if (old) disposeObject(old);
     if (!on) return;
-    const p = this.pieces[i]; const C = cellCenter(p.cx, p.cz);
+    const p = this.pieces[i]; const C = Ride.pieceCenter(p);
     const ring = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.25, 8, 28), new THREE.MeshBasicMaterial({ color: 0xff2020 }));
-    ring.rotation.x = Math.PI / 2; ring.position.set(C.x, Math.max(p.l0, p.l1) * RISE + 0.6, C.z); ring.name = 'failRing';
+    ring.rotation.x = Math.PI / 2; ring.position.set(C.x, (Math.max(p.l0, p.l1) + (PIECES[p.type].hgt || 0)) * RISE + 0.6, C.z); ring.name = 'failRing';
     this.group.add(ring);
   }
   toJSON() { return { type: this.type, name: this.name, color: this.color, pieces: this.pieces, open: this.open, stars: this.stars, stats: this.stats, earned: this.earned, ridersServed: this.ridersServed }; }
@@ -319,7 +346,7 @@ function makeVehicle(ride) {
 }
 function resetVehicle(v) {
   const [a, b] = v.ride.pieceRange(0);
-  v.s = (a + b) / 2 + (v.ride.water ? 0 : v.spacing); v.v = 0; v.mode = 'idle'; v.timer = 0;
+  v.s = (a + b) / 2 + (v.ride.water ? 0 : v.spacing); v.v = 0; v.mode = 'idle'; v.timer = 0; v.lastPiece = 0;
   placeVehicle(v);
 }
 const _fr = { p: new THREE.Vector3(), t: new THREE.Vector3(), n: new THREE.Vector3(), b: new THREE.Vector3() };
@@ -344,6 +371,10 @@ function stepVehicle(v, dt, stats, opts = {}) {
   for (let k = 0; k < sub; k++) {
     const f = ride.frameAt(v.s, _fr); const pi = f.pieceIndex; const piece = ride.pieces[pi]; const def = PIECES[piece.type];
     const slope = f.t.y;
+    if (def.inversion && v.lastPiece !== pi) {
+      if (v.v < def.minSpeed) { placeVehicle(v); return { reason: `Not enough speed for the ${def.name}! It needs speed ${def.minSpeed} but the cars only had ${v.v.toFixed(0)}. Put a bigger drop ⬇️ right before it!`, piece: pi }; }
+    }
+    v.lastPiece = pi;
     let v2;
     if (def.lift && slope > -0.02) { v.v = Math.max(Math.min(v.v, PHYS.liftSpeed + 0.001), PHYS.liftSpeed); v2 = v.v * v.v; }
     else {
@@ -372,6 +403,7 @@ function stepVehicle(v, dt, stats, opts = {}) {
       stats.maxV = Math.max(stats.maxV, v.v); stats.maxH = Math.max(stats.maxH, f.p.y);
       stats.time += h;
       if (def.turn && stats.lastTurn !== pi) { stats.turns++; stats.lastTurn = pi; }
+      if (def.inversion && stats.lastInv !== pi) { stats.inversions++; stats.lastInv = pi; }
       if (slope < -0.3 && v.v > 9 && stats.lastDrop !== pi && (def.dl < 0)) { stats.drops++; stats.lastDrop = pi; }
       if (stats.prevSlope > 0.15 && slope < -0.15 && v.v > 6) stats.airtime++;
       stats.prevSlope = slope;
@@ -388,7 +420,7 @@ function stepVehicle(v, dt, stats, opts = {}) {
   return null;
 }
 
-function newStats() { return { maxV: 0, maxH: 0, time: 0, turns: 0, drops: 0, airtime: 0, lastTurn: -1, lastDrop: -1, prevSlope: 0, splashed: false }; }
+function newStats() { return { maxV: 0, maxH: 0, time: 0, turns: 0, drops: 0, airtime: 0, inversions: 0, lastTurn: -1, lastDrop: -1, lastInv: -1, prevSlope: 0, splashed: false }; }
 
 /** Stars 1..5 from stats + layout. */
 function rateRide(ride, st) {
@@ -397,10 +429,11 @@ function rateRide(ride, st) {
   // biggest continuous drop in levels
   let best = 0, run = 0;
   for (const p of P) { const dl = PIECES[p.type].dl; if (dl < 0) { run += -dl; best = Math.max(best, run); } else if (dl > 0) run = 0; }
-  let ex = best * 1.6 + st.turns * 0.5 + st.drops * 0.9 + Math.min(st.maxV, 26) * 0.3 + P.length * 0.12 + st.airtime * 1.0;
+  const loops = P.filter(p => p.type === 'loop').length, corks = P.filter(p => p.type === 'corkscrew').length;
+  let ex = best * 1.6 + st.turns * 0.5 + st.drops * 0.9 + Math.min(st.maxV, 26) * 0.3 + P.length * 0.12 + st.airtime * 1.0 + loops * 4.5 + corks * 3.5;
   if (ride.water) ex += st.splashed ? 3 + Math.min(st.splashSpeed || 0, 15) * 0.25 : 0;
   const stars = ex >= 29 ? 5 : ex >= 21 ? 4 : ex >= 14 ? 3 : ex >= 8 ? 2 : 1;
-  return { stars, excitement: Math.round(ex * 10) / 10, maxLevel, bigDrop: best };
+  return { stars, excitement: Math.round(ex * 10) / 10, maxLevel, bigDrop: best, loops, corks };
 }
 
 /** BFS auto-connect: find pieces (flat/turn/down) from cursor back to the station entry. */

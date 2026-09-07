@@ -397,7 +397,7 @@ function updateCameraTransform() {
       const eye = f.p.clone().addScaledVector(f.b, 1.1).addScaledVector(f.t, 1.6);
       const look = f.p.clone().addScaledVector(f.t, 10).addScaledVector(f.b, 0.6);
       cam.position.lerp(eye, 0.35);
-      const m = new THREE.Matrix4().lookAt(cam.position, look, f.b.clone().lerp(UP, 0.3).normalize());
+      const m = new THREE.Matrix4().lookAt(cam.position, look, f.b);
       const q = new THREE.Quaternion().setFromRotationMatrix(m); cam.quaternion.slerp(q, 0.3);
       return;
     }

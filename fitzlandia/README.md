@@ -30,7 +30,7 @@ If the laptop's firewall asks, allow Python to accept incoming connections.
 ## How the game works
 
 - **🎢 Coaster / 🌊 Water Ride**: tap the grass to place a Station, then tap pieces
-  (Chain Lift, Hill Up, Drop, Big Drop, turns, Conveyor, Splash Pool). Each piece snaps
+  (Chain Lift, Hill Up, Drop, Big Drop, turns, Loop, Corkscrew, Conveyor, Splash Pool). Each piece snaps
   onto the end of the track. **Undo** removes the last one. **Auto-Finish** finds a route
   back to the station.
 - **🧪 TEST RIDE**: a car runs the track using real energy rules. If it fails, the game
@@ -48,6 +48,7 @@ If the laptop's firewall asks, allow Python to accept incoming connections.
 | Speed comes from height | `v² = v₀² − 2·g·Δh − friction` along the track |
 | Hills need speed | You can't climb higher than the tallest hill before it (minus friction) |
 | Turns have a speed limit (13) | Too fast on a turn = cars fly off. Add a small hill before it |
+| Loops need speed 12, Corkscrews need 9 | Put a big drop right before them or the cars won't make it over |
 | Water flows downhill only | Water rides need a Conveyor to go up; Splash Pools sit on the ground |
 | Friction never sleeps | Long flat track slowly stops the car |
 | Closed loop | The track must come back to the Station |

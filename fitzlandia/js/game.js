@@ -21,8 +21,9 @@ const G = {
 function buildingHeightLevels(b) { return b.type === 'ferris' ? 7 : b.type === 'carousel' ? 4 : b.type === 'tree' ? 2 : b.type === 'flowers' || b.type === 'fountain' ? 1 : 3; }
 function occupied(cx, cz, lmin, lmax, excludeRide, excludeIdx) {
   for (const r of G.rides) for (let i = 0; i < r.pieces.length; i++) {
-    const p = r.pieces[i]; if (p.cx !== cx || p.cz !== cz) continue;
-    const pmin = Math.min(p.l0, p.l1), pmax = Math.max(p.l0, p.l1);
+    const p = r.pieces[i]; const def = PIECES[p.type];
+    if (!Ride.pieceCells(p).some(([x, z]) => x === cx && z === cz)) continue;
+    const pmin = Math.min(p.l0, p.l1), pmax = Math.max(p.l0, p.l1) + (def.hgt || 0);
     if (lmin < pmax + 2 && lmax > pmin - 2) return true;
   }
   for (const b of G.buildings) for (const [x, z] of b.cells()) if (x === cx && z === cz) { if (lmin < buildingHeightLevels(b) + 2) return true; }
@@ -84,7 +85,10 @@ const CHALLENGES = [
   { id: 'riders50', icon: '🎟️', title: 'Fifty Riders', desc: '50 guests ride your rides', reward: 400, check: () => [G.stats.ridersServed || 0, 50] },
   { id: 'rides3', icon: '🎪', title: 'Triple Thrill', desc: 'Have 3 rides open', reward: 600, check: () => [G.rides.filter(r => r.open).length, 3] },
   { id: 'land', icon: '🌱', title: 'Growing Park', desc: 'Buy more land', reward: 300, check: () => [World.parkCells > 20 ? 1 : 0, 1] },
+  { id: 'loop', icon: '➰', title: 'Loop the Loop', desc: 'Build a coaster with a Loop', reward: 500, check: () => [maxStat(r => r.stats.loops), 1] },
   { id: 'bigdrop', icon: '⬇️', title: 'Mega Drop', desc: 'A ride with a drop of 7 levels', reward: 500, check: () => [maxStat(r => r.stats.bigDrop), 7] },
+  { id: 'cork', icon: '🌪️', title: 'Corkscrew King', desc: 'A coaster with 2 Corkscrews', reward: 600, check: () => [maxStat(r => r.stats.corks), 2] },
+  { id: 'inv4', icon: '🙃', title: 'Upside-Down Madness', desc: 'A coaster with 4 loops or corkscrews', reward: 1500, check: () => [maxStat(r => (r.stats.loops || 0) + (r.stats.corks || 0)), 4] },
   { id: 'ferris', icon: '🎡', title: 'Big Wheel', desc: 'Build a Ferris Wheel', reward: 500, check: () => [G.buildings.filter(b => b.type === 'ferris').length, 1] },
   { id: 'stars5', icon: '🌟', title: 'Five Star Ride!', desc: 'Get a 5-star ride', reward: 1000, check: () => [maxStat(r => r.stars), 5] },
   { id: 'rich', icon: '💰', title: 'Tycoon', desc: 'Earn $5000 in total', reward: 1000, check: () => [Math.floor(G.totalEarned), 5000] },
@@ -403,7 +407,7 @@ function passTest() {
   Audio_.fanfare();
   const tips = rating.stars < 5 ? `<p class="tip">💡 Want more stars? ${r.water ? 'Bigger drops into the Splash Pool, more turns' : 'Taller lift hills, bigger drops, more hills and turns'} make it more exciting!</p>` : '<p class="tip">🌟 A PERFECT ride! Guests will love it!</p>';
   showModal(`<h2>🎉 IT WORKS! ${r.name} is OPEN!</h2><div class="stars">${starStr(rating.stars)}</div>
-    <div class="statgrid"><div>⚡ Top speed<b>${Math.floor(t.stats.maxV)}</b></div><div>🏔️ Highest<b>${rating.maxLevel}</b></div><div>⬇️ Biggest drop<b>${rating.bigDrop}</b></div><div>🌀 Turns<b>${t.stats.turns}</b></div><div>⏱️ Ride time<b>${Math.floor(t.stats.time)}s</b></div><div>🎟️ Ticket<b>$${ticketPrice(r)}</b></div></div>
+    <div class="statgrid"><div>⚡ Top speed<b>${Math.floor(t.stats.maxV)}</b></div><div>🏔️ Highest<b>${rating.maxLevel}</b></div><div>⬇️ Biggest drop<b>${rating.bigDrop}</b></div><div>🌀 Turns<b>${t.stats.turns}</b></div><div>🙃 Upside-down<b>${t.stats.inversions}</b></div><div>⏱️ Ride time<b>${Math.floor(t.stats.time)}s</b></div><div>🎟️ Ticket<b>$${ticketPrice(r)}</b></div></div>
     ${tips}<div class="mrow"><button class="btn green big" id="mOpen">🎟️ Let guests ride!</button><button class="btn blue" id="mName2">✏️ Name it</button></div>`, { dismiss: false });
   $('#mOpen').onclick = () => { closeModal(); setMode('view'); G.selected = { kind: 'ride', ride: r }; renderContext(); save(); checkChallenges(); };
   $('#mName2').onclick = () => { closeModal(); setMode('view'); G.selected = { kind: 'ride', ride: r }; renderContext(); save(); renameRide(r); checkChallenges(); };
@@ -441,6 +445,7 @@ function computeHint() {
     if (r.pieces.length === 1) return r.water ? 'Add a Conveyor 🔼 to carry the boat up high!' : 'Add a Chain Lift ⛓️ to pull the cars up high — the higher, the faster!';
     if (!types.some(t => PIECES[t].dl < 0)) return r.water ? 'Now add a Drop ↘️ or Big Drop ⬇️ — SPLASH! Then a Splash Pool 💦 at the bottom.' : 'Now add a Drop ↘️ or Big Drop ⬇️ ... wheeee!';
     if (r.water && !types.includes('splash') && r.cursor.l === 0) return 'Add a Splash Pool 💦 here on the ground!';
+    if (!r.water && !types.some(t => PIECES[t].inversion) && r.pieces.length < 12) return 'Try a Loop ➰ or Corkscrew 🌪️! They need a BIG drop right before them for speed.';
     return 'Bring the track back to the Station 🏠 to make a loop. Stuck? Press 🧲 Auto-Finish!';
   }
   if (m === 'test') return 'Watch the ride! It must make it all the way around without getting stuck or going too fast on turns.';
@@ -480,6 +485,7 @@ function showRules() {
     <li>⛓️ <b>Chain Lifts</b> and 🔼 <b>Conveyors</b> pull cars up slowly. Everything else is <b>gravity</b>!</li>
     <li>⬇️ Going <b>down</b> makes you faster. Going <b>up</b> makes you slower. A hill can only be climbed if you have enough speed from a taller hill before it.</li>
     <li>🌀 <b>Turns</b> have a speed limit of <b>${PHYS.turnMax}</b>. Too fast = cars fly off! Slow down with a small hill first.</li>
+    <li>➰ <b>Loops</b> need speed <b>${PIECES.loop.minSpeed}</b> going in, 🌪️ <b>Corkscrews</b> need <b>${PIECES.corkscrew.minSpeed}</b>. Put a big drop right before them!</li>
     <li>🏁 The track must make a <b>loop</b> back to the Station.</li>
     <li>💦 Water rides: water only flows <b>downhill</b>. Splash Pools must be on the ground.</li>
     <li>🐢 Friction slowly steals speed, so a long flat track will stop. Keep it moving!</li>
