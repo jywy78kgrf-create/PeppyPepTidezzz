@@ -80,7 +80,7 @@ class Ride {
     for (const [x, z] of Ride.pieceCells(probe)) {
       if (!inPark(x, z)) return { ok: false, reason: `No room for a ${def.name} here — it needs ${def.cells || 1} cell${def.cells > 1 ? 's' : ''} inside the park 🚧` };
       if (x === s.cx && z === s.cz) return { ok: false, reason: 'That is the Station cell — line up with its arrow to finish ➡️🏠' };
-      if (occupiedFn(x, z, Math.min(c.l, l1), Math.max(c.l, l1) + (def.hgt || 0), this, -1)) return { ok: false, reason: 'Something is in the way! Go higher, or turn 🚧' };
+      if (occupiedFn(x, z, Math.min(c.l, l1), Math.max(c.l, l1) + (def.hgt || 0), null, -1)) return { ok: false, reason: 'Something is in the way! Go higher, or turn 🚧' };
     }
     return { ok: true };
   }
@@ -89,6 +89,38 @@ class Ride {
     this.pieces.push({ type, cx: c.cx, cz: c.cz, h: c.h, l0: c.l, l1: c.l + def.dl });
   }
   undo() { if (this.pieces.length > 1) return this.pieces.pop(); return null; }
+  /** Recompute every piece's cell/heading/level from the station onward (after a swap/insert/remove). */
+  relayout() {
+    let c = { cx: this.station.cx, cz: this.station.cz, h: this.station.h, l: 0 };
+    for (let i = 0; i < this.pieces.length; i++) {
+      const p = this.pieces[i];
+      if (i > 0) { p.cx = c.cx; p.cz = c.cz; p.h = c.h; p.l0 = c.l; p.l1 = c.l + PIECES[p.type].dl; }
+      c = this.exitOf(p);
+    }
+  }
+  /** Check the whole layout against the rules. -> {ok, reason, index} */
+  validate(occupiedFn) {
+    const s = this.station;
+    for (let i = 1; i < this.pieces.length; i++) {
+      const p = this.pieces[i], def = PIECES[p.type];
+      const lmin = Math.min(p.l0, p.l1), lmax = Math.max(p.l0, p.l1) + (def.hgt || 0);
+      if (lmin < 0) return { ok: false, reason: `piece ${i} (${def.name}) would go underground ⛏️`, index: i };
+      if (lmax > MAX_LEVEL) return { ok: false, reason: `piece ${i} (${def.name}) would be too high 🏔️`, index: i };
+      if (def.splash && p.l0 !== 0) return { ok: false, reason: `the Splash Pool would not be on the ground 💦`, index: i };
+      for (const [x, z] of Ride.pieceCells(p)) {
+        if (!inPark(x, z)) return { ok: false, reason: `piece ${i} (${def.name}) would be outside the park 🚧`, index: i };
+        if (x === s.cx && z === s.cz) return { ok: false, reason: `piece ${i} (${def.name}) would run into the Station 🏠`, index: i };
+        if (occupiedFn(x, z, lmin, lmax, this, i)) return { ok: false, reason: `piece ${i} (${def.name}) would hit something 🚧`, index: i };
+        for (let j = 1; j < i; j++) {
+          const q = this.pieces[j], qd = PIECES[q.type];
+          if (!Ride.pieceCells(q).some(([qx, qz]) => qx === x && qz === z)) continue;
+          const qmin = Math.min(q.l0, q.l1), qmax = Math.max(q.l0, q.l1) + (qd.hgt || 0);
+          if (lmin < qmax + 2 && lmax > qmin - 2) return { ok: false, reason: `piece ${i} (${def.name}) would crash into piece ${j} of this track 💥`, index: i };
+        }
+      }
+    }
+    return { ok: true };
+  }
 
   // ---------- geometry ----------
   /** Cells a piece occupies: [[cx,cz],...] */
@@ -256,6 +288,21 @@ class Ride {
       pool.position.set(C.x, 0.25, C.z); this.group.add(pool);
       const rimm = new THREE.Mesh(new THREE.TorusGeometry(2.4, 0.2, 8, 24), new THREE.MeshStandardMaterial({ color: 0xffffff })); rimm.rotation.x = Math.PI / 2; rimm.position.set(C.x, 0.5, C.z); this.group.add(rimm);
     }
+    // invisible pick boxes so a piece can be tapped while building
+    const picks = new THREE.Group(); picks.name = 'picks';
+    const pickMat = new THREE.MeshBasicMaterial({ visible: false });
+    for (let i = 1; i < this.pieces.length; i++) {
+      const p = this.pieces[i]; const def = PIECES[p.type];
+      const lmin = Math.min(p.l0, p.l1), lmax = Math.max(p.l0, p.l1) + (def.hgt || 0);
+      const h = (lmax - lmin) * RISE + 2.2;
+      for (const [x, z] of Ride.pieceCells(p)) {
+        const C = cellCenter(x, z);
+        const box = new THREE.Mesh(new THREE.BoxGeometry(CELL - 0.3, h, CELL - 0.3), pickMat);
+        box.position.set(C.x, lmin * RISE + h / 2 - 0.4, C.z); box.visible = false; box.userData.pieceIndex = i;
+        picks.add(box);
+      }
+    }
+    this.group.add(picks); this.picks = picks;
     // end-of-track arrow marker (while building)
     if (!closed) {
       const c = this.cursor; const C = cellCenter(c.cx, c.cz); const d = DIRS[c.h];
@@ -273,13 +320,13 @@ class Ride {
     if (closed) this.vehicle = makeVehicle(this);
     return this.group;
   }
-  highlightPiece(i, on) {
-    // mark a piece with a red glowing ring
-    const old = this.group.getObjectByName('failRing'); if (old) disposeObject(old);
-    if (!on) return;
+  highlightPiece(i, on, color = 0xff2020, name = 'failRing') {
+    // mark a piece with a glowing ring (red = problem, yellow = selected)
+    const old = this.group.getObjectByName(name); if (old) disposeObject(old);
+    if (!on || i == null || !this.pieces[i]) return;
     const p = this.pieces[i]; const C = Ride.pieceCenter(p);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.25, 8, 28), new THREE.MeshBasicMaterial({ color: 0xff2020 }));
-    ring.rotation.x = Math.PI / 2; ring.position.set(C.x, (Math.max(p.l0, p.l1) + (PIECES[p.type].hgt || 0)) * RISE + 0.6, C.z); ring.name = 'failRing';
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(name === 'selRing' ? 2.5 : 2.2, 0.25, 8, 28), new THREE.MeshBasicMaterial({ color }));
+    ring.rotation.x = Math.PI / 2; ring.position.set(C.x, (Math.max(p.l0, p.l1) + (PIECES[p.type].hgt || 0)) * RISE + 0.6, C.z); ring.name = name;
     this.group.add(ring);
   }
   toJSON() { return { type: this.type, name: this.name, color: this.color, pieces: this.pieces, open: this.open, stars: this.stars, stats: this.stats, earned: this.earned, ridersServed: this.ridersServed }; }
@@ -454,7 +501,7 @@ function autoConnect(ride, occupiedFn, maxPieces = 60) {
     const order = c.l > 0 ? ['down', 'straight', 'left', 'right'] : moves;
     for (const type of order) {
       const def = PIECES[type]; const l1 = c.l + def.dl; if (l1 < 0) continue;
-      if (occupiedFn(c.cx, c.cz, Math.min(c.l, l1), Math.max(c.l, l1), ride, -1)) continue;
+      if (occupiedFn(c.cx, c.cz, Math.min(c.l, l1), Math.max(c.l, l1), null, -1)) continue;
       const piece = { type, cx: c.cx, cz: c.cz, h: c.h, l0: c.l, l1 };
       const nx = ride.exitOf(piece); const k = key(nx);
       if (prev.has(k)) continue;

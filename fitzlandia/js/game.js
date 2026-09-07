@@ -6,7 +6,7 @@ const SAVE_KEY = 'fitzlandia_save_v1';
 const LAND_STEP = 6;
 const G = {
   money: 600, totalEarned: 0, rides: [], buildings: [], claimed: [], stats: {},
-  mode: 'view', sel: null, pending: null, shopType: null, selected: null,
+  mode: 'view', sel: null, pending: null, shopType: null, selected: null, pieceSel: null, insertMode: false,
   test: null, time: 0, sound: true, hintShown: {},
   totalStars() { return this.rides.reduce((a, r) => a + (r.open ? r.stars : 0), 0) + this.buildings.reduce((a, b) => a + (b.def.stars || 0), 0); },
   earn(amount, pos, icon) {
@@ -21,6 +21,7 @@ const G = {
 function buildingHeightLevels(b) { return b.type === 'ferris' ? 7 : b.type === 'carousel' ? 4 : b.type === 'tree' ? 2 : b.type === 'flowers' || b.type === 'fountain' ? 1 : 3; }
 function occupied(cx, cz, lmin, lmax, excludeRide, excludeIdx) {
   for (const r of G.rides) for (let i = 0; i < r.pieces.length; i++) {
+    if (r === excludeRide) continue;
     const p = r.pieces[i]; const def = PIECES[p.type];
     if (!Ride.pieceCells(p).some(([x, z]) => x === cx && z === cz)) continue;
     const pmin = Math.min(p.l0, p.l1), pmax = Math.max(p.l0, p.l1) + (def.hgt || 0);
@@ -127,7 +128,8 @@ function setMode(mode, data) {
   World.grid.visible = (mode === 'placeStation' || mode === 'build' || mode === 'placeShop');
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.mode === tabFor(mode)));
   if (mode === 'placeStation') { G.pending = Object.assign({ heading: 1, color: RIDE_COLORS[G.rides.length % RIDE_COLORS.length] }, data); }
-  if (mode === 'build') { G.sel = data.ride; const s = G.sel.station; const c = cellCenter(s.cx, s.cz); focusCamera(c.x, c.z, Math.max(World.cam.dist, 40)); }
+  G.pieceSel = null; G.insertMode = false;
+  if (mode === 'build') { G.sel = data.ride; if (data.pieceSel != null) G.pieceSel = data.pieceSel; const s = G.sel.station; const c = cellCenter(s.cx, s.cz); focusCamera(c.x, c.z, Math.max(World.cam.dist, 40)); }
   if (mode !== 'build' && mode !== 'test') { if (G.sel && !G.sel.closed && G.sel.pieces.length === 1 && !G.sel.open) { /* keep unbuilt ride */ } }
   ghostClear();
   renderContext();
@@ -143,12 +145,21 @@ function renderContext() {
       ${RIDE_COLORS.map(c => `<button class="swatch ${c === p.color ? 'on' : ''}" data-action="color" data-color="${c}" style="background:#${c.toString(16).padStart(6, '0')}"></button>`).join('')}
       <button class="btn" data-action="rotate">🔄 Direction ${arrow}</button>
       <button class="btn grey" data-action="cancel">✖ Cancel</button></div>`;
+  } else if (m === 'build' && G.pieceSel != null) {
+    const r = G.sel; const i = G.pieceSel; const p = r.pieces[i]; const d0 = PIECES[p.type];
+    html = `<div class="row"><div class="label">✏️ Piece ${i} of ${r.pieces.length - 1}: ${d0.icon} <b>${d0.name}</b> — ${G.insertMode ? 'tap a piece to INSERT it after this one' : 'tap a piece to SWAP it'}</div>
+        <button class="btn ${G.insertMode ? 'green' : 'blue'}" data-action="insertMode">${G.insertMode ? '🔁 Swap instead' : '➕ Insert after'}</button>
+        <button class="btn grey" data-action="prevPiece" ${i > 1 ? '' : 'disabled'}>◀</button><button class="btn grey" data-action="nextPiece" ${i < r.pieces.length - 1 ? '' : 'disabled'}>▶</button>
+        <button class="btn red" data-action="removePiece">➖ Remove</button>
+        <button class="btn grey" data-action="deselect">✖ Done</button></div>
+      <div class="row pieces">${r.palette.map(t => { const d = PIECES[t]; const cur = !G.insertMode && t === p.type; return `<button class="piece ${cur ? 'on' : ''}" data-action="piece" data-type="${t}"><span class="ic">${d.icon}</span><span class="nm">${d.name}</span><span class="cost">$${d.cost}</span></button>`; }).join('')}</div>
+      <div class="row"><div class="label">💡 Changing a piece moves everything after it. Undo if you don't like it.</div><button class="btn grey" data-action="undo">↩️ Undo</button></div>`;
   } else if (m === 'build') {
     const r = G.sel; const c = r.cursor; const closed = r.closed;
     html = `<div class="row pieces">${r.palette.map(t => { const d = PIECES[t]; const ok = !closed && r.canAdd(t, occupied).ok && G.money >= d.cost; return `<button class="piece ${ok ? '' : 'dim'}" data-action="piece" data-type="${t}"><span class="ic">${d.icon}</span><span class="nm">${d.name}</span><span class="cost">$${d.cost}</span></button>`; }).join('')}</div>
       <div class="row">
-        <div class="label">${closed ? '✅ Loop complete!' : `📏 ${r.pieces.length} pieces · Height ${c.l}`} · Cost $${r.cost}</div>
-        <button class="btn grey" data-action="undo" ${r.pieces.length > 1 ? '' : 'disabled'}>↩️ Undo</button>
+        <div class="label">${closed ? '✅ Loop complete!' : `📏 ${r.pieces.length} pieces · Height ${c.l}`} · Cost $${r.cost} · <span class="small">tap any track piece to change it</span></div>
+        <button class="btn grey" data-action="undo" ${(r.pieces.length > 1 || (r.history && r.history.length)) ? '' : 'disabled'}>↩️ Undo</button>
         <button class="btn blue" data-action="auto" ${closed || r.pieces.length < 2 ? 'disabled' : ''}>🧲 Auto-Finish</button>
         <button class="btn green big" data-action="test" ${closed ? '' : 'disabled'}>🧪 TEST RIDE!</button>
         <button class="btn grey" data-action="done">💾 Later</button>
@@ -191,8 +202,13 @@ $('#context').addEventListener('click', e => {
   if (a === 'color') { G.pending.color = parseInt(b.dataset.color); renderContext(); ghostUpdate(); }
   else if (a === 'rotate') { G.pending.heading = (G.pending.heading + 1) % 4; Audio_.click(); renderContext(); ghostUpdate(); }
   else if (a === 'cancel') setMode('view');
-  else if (a === 'piece') addPiece(b.dataset.type);
-  else if (a === 'undo') undoPiece();
+  else if (a === 'piece') { if (G.pieceSel != null) (G.insertMode ? insertPiece(b.dataset.type) : swapPiece(b.dataset.type)); else addPiece(b.dataset.type); }
+  else if (a === 'undo') undoChange();
+  else if (a === 'insertMode') { G.insertMode = !G.insertMode; renderContext(); }
+  else if (a === 'removePiece') removePiece();
+  else if (a === 'deselect') selectPiece(null);
+  else if (a === 'prevPiece') selectPiece(G.pieceSel - 1);
+  else if (a === 'nextPiece') selectPiece(G.pieceSel + 1);
   else if (a === 'auto') doAutoConnect();
   else if (a === 'test') startTest(G.sel);
   else if (a === 'done') { setMode('view'); toast('Saved! Tap the station 🏠 any time to keep building.'); save(); }
@@ -233,6 +249,7 @@ function addPiece(type) {
   const res = r.canAdd(type, occupied);
   if (!res.ok) { toast(res.reason); Audio_.fail(); return; }
   if (!G.spend(def.cost)) { toast('Not enough money! 💰 Open a ride or add shops to earn more.'); return; }
+  pushHistory(r);
   r.add(type); r.buildMesh(World.scene); Audio_.pop();
   const c = r.cursor; const p = cellCenter(c.cx, c.cz);
   // keep the cursor in view
@@ -240,9 +257,51 @@ function addPiece(type) {
   if (r.closed) { toast('🎉 Loop complete! Press TEST RIDE!', 3000, 'gold'); Audio_.coin(); }
   renderContext(); save();
 }
-function undoPiece() {
-  const r = G.sel; const p = r.undo(); if (!p) return;
-  G.money += PIECES[p.type].cost; r.buildMesh(World.scene); Audio_.click(); renderContext(); save();
+function pushHistory(r) { r.history = r.history || []; r.history.push(JSON.stringify(r.pieces)); if (r.history.length > 40) r.history.shift(); }
+function undoChange() {
+  const r = G.sel; const costBefore = r.cost;
+  if (r.history && r.history.length) { r.pieces = JSON.parse(r.history.pop()); r.relayout(); }
+  else { const p = r.undo(); if (!p) return; }
+  G.money += costBefore - r.cost;
+  G.pieceSel = null; G.insertMode = false;
+  r.buildMesh(World.scene); Audio_.click(); renderContext(); save();
+}
+/** Apply a layout edit with validation + money check; reverts and explains on failure. */
+function applyEdit(r, mutate) {
+  const before = JSON.stringify(r.pieces), costBefore = r.cost;
+  mutate(); r.relayout();
+  const v = r.validate(occupied);
+  if (!v.ok) { r.pieces = JSON.parse(before); r.relayout(); toast("Can't do that: " + v.reason, 3500); Audio_.fail(); return false; }
+  const delta = r.cost - costBefore;
+  if (delta > 0 && G.money < delta) { r.pieces = JSON.parse(before); r.relayout(); toast(`Not enough money! That costs $${delta} more. 💰`); Audio_.fail(); return false; }
+  r.history = r.history || []; r.history.push(before); if (r.history.length > 40) r.history.shift();
+  G.money -= delta;
+  r.buildMesh(World.scene); Audio_.pop();
+  if (r.closed) toast('✅ Still a complete loop! Press TEST RIDE!', 2500, 'gold');
+  else toast('The end of the track moved. Bring it back to the Station 🏠 (or 🧲 Auto-Finish)', 3500);
+  return true;
+}
+function selectPiece(i) {
+  const r = G.sel; if (!r) return;
+  G.insertMode = false;
+  G.pieceSel = (i != null && i >= 1 && i < r.pieces.length) ? i : null;
+  r.highlightPiece(G.pieceSel, G.pieceSel != null, 0xffd11a, 'selRing');
+  if (G.pieceSel != null) { const c = Ride.pieceCenter(r.pieces[G.pieceSel]); const dx = c.x - World.cam.target.x, dz = c.z - World.cam.target.z; if (Math.hypot(dx, dz) > World.cam.dist * 0.4) focusCamera(c.x, c.z); Audio_.click(); }
+  renderContext();
+}
+function swapPiece(type) {
+  const r = G.sel, i = G.pieceSel; if (i == null) return;
+  if (r.pieces[i].type === type) { toast('It already is a ' + PIECES[type].name + '!'); return; }
+  if (applyEdit(r, () => { r.pieces[i] = { type, cx: 0, cz: 0, h: 0, l0: 0, l1: 0 }; })) { selectPiece(i); save(); }
+}
+function insertPiece(type) {
+  const r = G.sel, i = G.pieceSel; if (i == null) return;
+  if (applyEdit(r, () => { r.pieces.splice(i + 1, 0, { type, cx: 0, cz: 0, h: 0, l0: 0, l1: 0 }); })) { selectPiece(i + 1); G.insertMode = false; renderContext(); save(); }
+}
+function removePiece() {
+  const r = G.sel, i = G.pieceSel; if (i == null) return;
+  if (r.pieces.length <= 2) { toast('Use 🗑️ to remove the whole ride instead.'); return; }
+  if (applyEdit(r, () => { r.pieces.splice(i, 1); })) { selectPiece(Math.min(i, r.pieces.length - 1)); save(); }
 }
 function doAutoConnect() {
   const r = G.sel;
@@ -346,8 +405,13 @@ function onTap(px, py) {
     if (G.mode === 'placeStation') placeStation(cx, cz); else placeShop(cx, cz);
     return;
   }
-  // pick rides/buildings
   const ray = screenRay(px, py);
+  if (G.mode === 'build' && G.sel && G.sel.picks) {
+    const hit = ray.intersectObjects(G.sel.picks.children, false);
+    if (hit.length) { selectPiece(hit[0].object.userData.pieceIndex); return; }
+    if (G.pieceSel != null) { selectPiece(null); return; }
+  }
+  // pick rides/buildings
   const objs = [];
   for (const r of G.rides) if (r.stationMesh) objs.push(r.stationMesh);
   for (const b of G.buildings) if (b.group) objs.push(b.group);
@@ -394,7 +458,7 @@ function failTest(res) {
   r.highlightPiece(res.piece, true); Audio_.fail();
   const p = r.pieces[res.piece]; const c = cellCenter(p.cx, p.cz); focusCamera(c.x, c.z, 30);
   showModal(`<h2>😬 Uh oh! The ride didn't work</h2><p class="big">${res.reason}</p><p>The problem spot is marked with a <b style="color:#e53935">red ring</b>.</p><div class="mrow"><button class="btn green big" id="mFix">🔧 Fix it!</button></div>`, { dismiss: false });
-  $('#mFix').onclick = () => { closeModal(); setMode('build', { ride: r }); };
+  $('#mFix').onclick = () => { closeModal(); setMode('build', { ride: r, pieceSel: res.piece }); selectPiece(res.piece); r.highlightPiece(res.piece, true); };
 }
 function passTest() {
   const t = G.test; G.test = null; endTestVisuals();
@@ -441,7 +505,8 @@ function computeHint() {
   if (m === 'placeStation') return 'Tap the grass where your Station 🏠 should go. The arrow shows which way the cars leave.';
   if (m === 'build') {
     const r = G.sel; const types = r.pieces.map(p => p.type);
-    if (r.closed) return '✅ Loop complete! Press 🧪 TEST RIDE to see if it works.';
+    if (G.pieceSel != null) return G.insertMode ? 'Pick a piece below to add it right after the yellow ring.' : 'Pick a piece below to swap it in. Everything after it moves along. ➖ removes it.';
+    if (r.closed) return '✅ Loop complete! Press 🧪 TEST RIDE to see if it works. Tap any piece to change it.';
     if (r.pieces.length === 1) return r.water ? 'Add a Conveyor 🔼 to carry the boat up high!' : 'Add a Chain Lift ⛓️ to pull the cars up high — the higher, the faster!';
     if (!types.some(t => PIECES[t].dl < 0)) return r.water ? 'Now add a Drop ↘️ or Big Drop ⬇️ — SPLASH! Then a Splash Pool 💦 at the bottom.' : 'Now add a Drop ↘️ or Big Drop ⬇️ ... wheeee!';
     if (r.water && !types.includes('splash') && r.cursor.l === 0) return 'Add a Splash Pool 💦 here on the ground!';
@@ -495,7 +560,8 @@ function showRules() {
 function showHelp() {
   showModal(`<h2>❓ How to play</h2><ul class="rules">
     <li>🎢 <b>Coaster</b> / 🌊 <b>Water Ride</b>: place a Station, then tap pieces to add them one after another.</li>
-    <li>↩️ <b>Undo</b> takes back the last piece. 🧲 <b>Auto-Finish</b> finds a way home.</li>
+    <li>↩️ <b>Undo</b> takes back your last change. 🧲 <b>Auto-Finish</b> finds a way home.</li>
+    <li>✏️ <b>Tap any piece</b> of your track to swap it, remove it, or insert a new piece after it. The rest of the track moves with it.</li>
     <li>🧪 <b>TEST</b> the ride. If it works, guests can ride it and you earn money!</li>
     <li>🏪 <b>Shops</b>: candy, toys, games and big attractions earn money too. 🌱 Buy more land to grow.</li>
     <li>🏆 <b>Challenges</b> give big money rewards.</li>
