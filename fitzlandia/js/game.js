@@ -510,7 +510,7 @@ function computeHint() {
     if (r.pieces.length === 1) return r.water ? 'Add a Conveyor 🔼 to carry the boat up high!' : 'Add a Chain Lift ⛓️ to pull the cars up high — the higher, the faster!';
     if (!types.some(t => PIECES[t].dl < 0)) return r.water ? 'Now add a Drop ↘️ or Big Drop ⬇️ — SPLASH! Then a Splash Pool 💦 at the bottom.' : 'Now add a Drop ↘️ or Big Drop ⬇️ ... wheeee!';
     if (r.water && !types.includes('splash') && r.cursor.l === 0) return 'Add a Splash Pool 💦 here on the ground!';
-    if (!r.water && !types.some(t => PIECES[t].inversion) && r.pieces.length < 12) return 'Try a Loop ➰ or Corkscrew 🌪️! They need a BIG drop right before them for speed.';
+    if (!r.water && !types.some(t => PIECES[t].inversion) && r.pieces.length < 12) return 'Too fast? Use Brakes 🛑 or a Bank Turn 🏎️. Too slow? Add a Booster 🚀. Loops ➰ need speed 12!';
     return 'Bring the track back to the Station 🏠 to make a loop. Stuck? Press 🧲 Auto-Finish!';
   }
   if (m === 'test') return 'Watch the ride! It must make it all the way around without getting stuck or going too fast on turns.';
@@ -549,7 +549,8 @@ function showRules() {
   showModal(`<h2>📜 The Laws of FitzLandia Physics</h2><ul class="rules">
     <li>⛓️ <b>Chain Lifts</b> and 🔼 <b>Conveyors</b> pull cars up slowly. Everything else is <b>gravity</b>!</li>
     <li>⬇️ Going <b>down</b> makes you faster. Going <b>up</b> makes you slower. A hill can only be climbed if you have enough speed from a taller hill before it.</li>
-    <li>🌀 <b>Turns</b> have a speed limit of <b>${PHYS.turnMax}</b>. Too fast = cars fly off! Slow down with a small hill first.</li>
+    <li>🌀 <b>Turns</b> have a speed limit of <b>${PHYS.turnMax}</b>. 🏎️ <b>Banked turns</b> lean into the curve and allow <b>${PIECES.bankleft.turnMax}</b>.</li>
+    <li>🛑 <b>Brakes</b> slow the cars down to <b>${PIECES.brake.brake}</b>. 🚀 <b>Boosters</b> speed them up to <b>${PIECES.booster.boost}</b>. 🐫 <b>Bumps</b> give a little hop and scrub off a bit of speed.</li>
     <li>➰ <b>Loops</b> need speed <b>${PIECES.loop.minSpeed}</b> going in, 🌪️ <b>Corkscrews</b> need <b>${PIECES.corkscrew.minSpeed}</b>. Put a big drop right before them!</li>
     <li>🏁 The track must make a <b>loop</b> back to the Station.</li>
     <li>💦 Water rides: water only flows <b>downhill</b>. Splash Pools must be on the ground.</li>

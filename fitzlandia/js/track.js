@@ -11,14 +11,19 @@ const PIECES = {
   left:     { name: 'Turn Left',  icon: '↩️', cost: 15, dl: 0,  turn: -1 },
   right:    { name: 'Turn Right', icon: '↪️', cost: 15, dl: 0,  turn: 1 },
   lift:     { name: 'Chain Lift', icon: '⛓️', cost: 30, dl: 1,  turn: 0, lift: true },
+  bankleft: { name: '↩️ Bank Left',  icon: '🏎️', cost: 25, dl: 0, turn: -1, bank: true, turnMax: 24 },
+  bankright:{ name: '↪️ Bank Right', icon: '🏎️', cost: 25, dl: 0, turn: 1,  bank: true, turnMax: 24 },
+  brake:    { name: 'Brakes',     icon: '🛑', cost: 25, dl: 0,  turn: 0, brake: 6 },
+  booster:  { name: 'Booster',    icon: '🚀', cost: 60, dl: 0,  turn: 0, boost: 16 },
+  bump:     { name: 'Bump',       icon: '🐫', cost: 15, dl: 0,  turn: 0, bump: true, samples: 16 },
   loop:     { name: 'Loop',       icon: '➰', cost: 80, dl: 0,  turn: 0, cells: 1, hgt: 3, inversion: true, minSpeed: 12, samples: 56 },
   corkscrew:{ name: 'Corkscrew',  icon: '🌪️', cost: 70, dl: 0,  turn: 0, cells: 2, hgt: 2, inversion: true, minSpeed: 9,  samples: 44 },
   conveyor: { name: 'Conveyor',   icon: '🔼', cost: 30, dl: 1,  turn: 0, lift: true, water: true },
   splash:   { name: 'Splash Pool',icon: '💦', cost: 40, dl: 0,  turn: 0, splash: true, water: true },
 };
-const COASTER_PIECES = ['lift', 'straight', 'up', 'down', 'bigdrop', 'left', 'right', 'loop', 'corkscrew'];
-const LOOP_R = 2.6, LOOP_A = 2.0, CORK_R = 1.5;
-const WATER_PIECES = ['conveyor', 'straight', 'up', 'down', 'bigdrop', 'left', 'right', 'splash'];
+const COASTER_PIECES = ['lift', 'straight', 'up', 'down', 'bigdrop', 'left', 'right', 'bankleft', 'bankright', 'brake', 'booster', 'bump', 'loop', 'corkscrew'];
+const LOOP_R = 2.6, LOOP_A = 2.0, CORK_R = 1.5, BANK_ANGLE = 0.62, BUMP_H = 1.0;
+const WATER_PIECES = ['conveyor', 'straight', 'up', 'down', 'bigdrop', 'left', 'right', 'bankleft', 'bankright', 'brake', 'booster', 'splash'];
 
 // Physics rules (the "laws of FitzLandia")
 const PHYS = {
@@ -26,7 +31,7 @@ const PHYS = {
   liftSpeed: 4.5,      // chain lift / conveyor speed
   launch: 4.0,         // speed leaving the station
   stationBrake: 5.0,   // max speed inside the station
-  turnMax: 13.0,       // faster than this on a turn = cars fly off
+  turnMax: 14.0,       // faster than this on a flat turn = cars fly off (banked turns allow 24)
   flow: 2.6,           // water current speed on flat/down water pieces
   muCoaster: 0.012,    // rolling friction
   muWater: 0.03,       // water drag on flat
@@ -136,6 +141,11 @@ class Ride {
       const ex = C.x - d.x * r, ez = C.z - d.z * r;                             // entry point
       const ox = ex + sx * r, oz = ez + sz * r;                                // arc center
       const th = t * Math.PI / 2, cs = Math.cos(th), sn = Math.sin(th);
+      if (def.bank) { // lean into the turn: up-hint tilts toward the arc centre, ramping in and out
+        const beta = BANK_ANGLE * Math.sin(Math.PI * t);
+        const inx = sx * cs - d.x * sn, inz = sz * cs - d.z * sn; // radial direction toward the centre at this point
+        hint.set(inx * Math.sin(beta), Math.cos(beta), inz * Math.sin(beta));
+      }
       return out.set(ox - sx * r * cs + d.x * r * sn, 0, oz - sz * r * cs + d.z * r * sn);
     }
     const ex = C.x - d.x * r, ez = C.z - d.z * r; // entry point
@@ -151,6 +161,8 @@ class Ride {
       const L = CELL * 2, ph = t * Math.PI * 2;
       along = t * L; y = CORK_R * (1 - Math.cos(ph)); side = CORK_R * Math.sin(ph);
       hint.set(-S.x * Math.sin(ph), Math.cos(ph), -S.z * Math.sin(ph));
+    } else if (def.bump) {
+      along = t * CELL; const sn = Math.sin(Math.PI * t); y = BUMP_H * sn * sn;
     } else {
       along = t * CELL * (def.cells || 1);
     }
@@ -257,7 +269,7 @@ class Ride {
       const pos = f.p.clone().addScaledVector(f.b, this.water ? -0.12 : -0.2);
       m4.makeBasis(f.n, f.b, f.t).setPosition(pos);
       ties.setMatrixAt(ti, m4);
-      ties.setColorAt(ti, c3.set(def.lift ? 0xffd11a : (def.splash ? 0x3fb4ff : 0x5a6570)));
+      ties.setColorAt(ti, c3.set(def.lift ? 0xffd11a : def.splash ? 0x3fb4ff : def.brake ? 0xe53935 : def.boost ? 0x00e5ff : def.bump ? 0xff8c1a : def.bank ? 0xffffff : 0x5a6570));
       ti++;
     }
     ties.count = ti; ties.castShadow = true; this.group.add(ties);
@@ -419,15 +431,18 @@ function stepVehicle(v, dt, stats, opts = {}) {
     const f = ride.frameAt(v.s, _fr); const pi = f.pieceIndex; const piece = ride.pieces[pi]; const def = PIECES[piece.type];
     const slope = f.t.y;
     if (def.inversion && v.lastPiece !== pi) {
-      if (v.v < def.minSpeed) { placeVehicle(v); return { reason: `Not enough speed for the ${def.name}! It needs speed ${def.minSpeed} but the cars only had ${v.v.toFixed(0)}. Put a bigger drop ⬇️ right before it!`, piece: pi }; }
+      if (v.v < def.minSpeed) { placeVehicle(v); return { reason: `Not enough speed for the ${def.name}! It needs speed ${def.minSpeed} but the cars only had ${v.v.toFixed(0)}. Put a bigger drop ⬇️ or a Booster 🚀 right before it!`, piece: pi }; }
     }
     v.lastPiece = pi;
     let v2;
     if (def.lift && slope > -0.02) { v.v = Math.max(Math.min(v.v, PHYS.liftSpeed + 0.001), PHYS.liftSpeed); v2 = v.v * v.v; }
     else {
-      const mu = ride.water ? (slope <= 0.02 ? PHYS.muWater : PHYS.muCoaster) : PHYS.muCoaster;
+      let mu = ride.water ? (slope <= 0.02 ? PHYS.muWater : PHYS.muCoaster) : PHYS.muCoaster;
+      if (def.bump) mu = 0.38; // rumble strip: bumps scrub off some speed
       const ds = v.v * h;
       v2 = v.v * v.v - 2 * PHYS.g * slope * ds - 2 * mu * PHYS.g * ds - 2 * PHYS.drag * v.v * v.v * ds;
+      if (def.brake && v2 > def.brake * def.brake) v2 = Math.max(def.brake * def.brake, v2 - 2 * 12 * ds);
+      if (def.boost && v2 < def.boost * def.boost) v2 = Math.min(def.boost * def.boost, v2 + 2 * 22 * ds);
       if (def.splash) { v2 = Math.min(v2, Math.max(PHYS.flow * PHYS.flow, v2 - 2 * 9 * ds)); if (stats && !stats.splashed) { stats.splashed = true; stats.splashSpeed = v.v; if (opts.onSplash) opts.onSplash(f, v.v); } }
       if (ride.water && slope <= 0.03 && v2 < PHYS.flow * PHYS.flow) v2 = PHYS.flow * PHYS.flow;
       if (def.station && v2 > PHYS.stationBrake * PHYS.stationBrake) v2 = Math.max(PHYS.stationBrake * PHYS.stationBrake, v2 - 2 * 14 * ds);
@@ -435,15 +450,17 @@ function stepVehicle(v, dt, stats, opts = {}) {
         v.v = 0; placeVehicle(v);
         const up = slope > 0.01;
         let reason;
-        if (ride.water && up) reason = 'Water can\'t flow uphill! Use a Conveyor 🔼 to lift the boat, or make this hill smaller.';
-        else if (up) reason = 'Not enough speed to get over this hill! Use a Chain Lift ⛓️, or make the hill before it taller.';
-        else reason = 'The car ran out of energy and stopped! Add a taller lift hill so it has more speed.';
+        if (ride.water && up) reason = 'Water can\'t flow uphill! Use a Conveyor 🔼 to lift the boat, put a Booster 🚀 before it, or make this hill smaller.';
+        else if (up) reason = 'Not enough speed to get over this hill! Put a Booster 🚀 or a taller drop before it, or swap this for a Chain Lift ⛓️.';
+        else reason = 'The car ran out of energy and stopped! Add a Booster 🚀 here, or a taller lift hill earlier.';
         return { reason, piece: pi };
       }
     }
     v.v = Math.sqrt(v2);
-    if (def.turn && v.v > PHYS.turnMax && !ride.water) { placeVehicle(v); return { reason: `Too fast on the turn! (${v.v.toFixed(0)} — max is ${PHYS.turnMax}) The cars would fly off! Add a small hill ↗️ before the turn to slow down.`, piece: pi }; }
-    if (def.turn && v.v > PHYS.turnMax * 1.15 && ride.water) { placeVehicle(v); return { reason: `Too fast on the turn! The boat would tip over! Add a Splash Pool 💦 or a hill ↗️ before the turn.`, piece: pi }; }
+    const tmax = (def.turnMax || PHYS.turnMax) * (ride.water ? 1.15 : 1);
+    if (def.turn && v.v > tmax) { placeVehicle(v); return { reason: def.bank
+      ? `Too fast even for a banked turn! (${v.v.toFixed(0)} — max is ${tmax.toFixed(0)}) Put Brakes 🛑 before it.`
+      : `Too fast on the turn! (${v.v.toFixed(0)} — max is ${tmax.toFixed(0)}) The ${ride.water ? 'boat would tip over' : 'cars would fly off'}! Swap it for a Bank Turn 🏎️ (max 24), or put Brakes 🛑 or a Hill Up ↗️ before it.`, piece: pi }; }
     const prevS = v.s;
     v.s += v.v * h;
     if (stats) {
@@ -477,7 +494,8 @@ function rateRide(ride, st) {
   let best = 0, run = 0;
   for (const p of P) { const dl = PIECES[p.type].dl; if (dl < 0) { run += -dl; best = Math.max(best, run); } else if (dl > 0) run = 0; }
   const loops = P.filter(p => p.type === 'loop').length, corks = P.filter(p => p.type === 'corkscrew').length;
-  let ex = best * 1.6 + st.turns * 0.5 + st.drops * 0.9 + Math.min(st.maxV, 26) * 0.3 + P.length * 0.12 + st.airtime * 1.0 + loops * 4.5 + corks * 3.5;
+  const boosts = P.filter(p => p.type === 'booster').length, bumps = P.filter(p => p.type === 'bump').length;
+  let ex = best * 1.6 + st.turns * 0.5 + st.drops * 0.9 + Math.min(st.maxV, 26) * 0.3 + P.length * 0.12 + st.airtime * 1.0 + loops * 4.5 + corks * 3.5 + Math.min(boosts, 3) * 1.2 + Math.min(bumps, 4) * 0.6;
   if (ride.water) ex += st.splashed ? 3 + Math.min(st.splashSpeed || 0, 15) * 0.25 : 0;
   const stars = ex >= 29 ? 5 : ex >= 21 ? 4 : ex >= 14 ? 3 : ex >= 8 ? 2 : 1;
   return { stars, excitement: Math.round(ex * 10) / 10, maxLevel, bigDrop: best, loops, corks };
@@ -490,7 +508,7 @@ function autoConnect(ride, occupiedFn, maxPieces = 60) {
   const key = c => `${c.cx},${c.cz},${c.h},${c.l}`;
   const prev = new Map(); prev.set(key(start), null);
   const q = [start];
-  const moves = ride.water ? ['straight', 'down', 'left', 'right'] : ['straight', 'down', 'left', 'right'];
+  const moves = ['straight', 'down', 'bankleft', 'bankright']; // banked turns so a fast track still makes it home
   let found = null, iter = 0;
   while (q.length && iter++ < 250000) {
     const c = q.shift();
@@ -498,7 +516,7 @@ function autoConnect(ride, occupiedFn, maxPieces = 60) {
     if (!inPark(c.cx, c.cz) || (c.cx === s.cx && c.cz === s.cz)) continue;
     const depth = (prev.get(key(c)) || {}).depth || 0;
     if (depth > maxPieces) continue;
-    const order = c.l > 0 ? ['down', 'straight', 'left', 'right'] : moves;
+    const order = c.l > 0 ? ['down', 'straight', 'bankleft', 'bankright'] : moves;
     for (const type of order) {
       const def = PIECES[type]; const l1 = c.l + def.dl; if (l1 < 0) continue;
       if (occupiedFn(c.cx, c.cz, Math.min(c.l, l1), Math.max(c.l, l1), null, -1)) continue;

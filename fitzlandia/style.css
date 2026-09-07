@@ -35,8 +35,8 @@ button { font-family: inherit; font-weight: 700; cursor: pointer; border: 0; }
 .btn.grey { background:#90a4ae; } .btn.blue { background:var(--blue); } .btn.green { background:var(--green); } .btn.red { background:var(--red); }
 .btn.big { font-size:21px; padding:14px 22px; }
 .btn[disabled] { opacity:.45; box-shadow:none; transform:none; cursor:default; }
-.piece { flex:0 0 auto; width:92px; height:92px; border-radius:18px; background:#f4f7fa; border:3px solid #e0e6ec; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; }
-.piece .ic { font-size:32px; line-height:1; } .piece .nm { font-size:12px; font-weight:800; } .piece .cost { font-size:12px; color:#1b8f3a; font-weight:800; }
+.piece { flex:0 0 auto; width:96px; height:98px; border-radius:18px; background:#f4f7fa; border:3px solid #e0e6ec; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; }
+.piece .ic { font-size:32px; line-height:1; } .piece .nm { font-size:12px; font-weight:800; line-height:1.05; text-align:center; white-space:nowrap; } .piece .cost { font-size:12px; color:#1b8f3a; font-weight:800; }
 .piece.on { border-color:var(--blue); background:#e3f2ff; }
 .piece.dim { opacity:.4; }
 .piece.land { background:#e9f9e2; border-color:#b7e4a5; }
