@@ -250,9 +250,11 @@ class Ride {
       const trough = new THREE.Mesh(sweepGeometry(F, [[-1.15, 0.9], [-1.15, 0.15], [-0.85, -0.05], [0.85, -0.05], [1.15, 0.15], [1.15, 0.9]], closed),
         new THREE.MeshStandardMaterial({ color: 0xdfe9f2, roughness: 0.6, side: THREE.DoubleSide }));
       trough.castShadow = true; trough.receiveShadow = true; this.group.add(trough);
-      const water = new THREE.Mesh(sweepGeometry(F, [[-0.95, 0.35], [0.95, 0.35]], closed),
-        new THREE.MeshStandardMaterial({ color: 0x3fb4ff, roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.8, side: THREE.DoubleSide }));
-      this.group.add(water);
+      const deep = new THREE.Mesh(sweepGeometry(F, [[-0.9, 0.12], [0.9, 0.12]], closed),
+        new THREE.MeshStandardMaterial({ color: 0x2a9ad8, roughness: 0.4, side: THREE.DoubleSide }));
+      this.group.add(deep);
+      const water = new THREE.Mesh(sweepGeometry(F, [[-0.98, 0.4], [0.98, 0.4]], closed), waterMaterial());
+      water.renderOrder = 2; this.group.add(water);
       const rim = new THREE.Mesh(sweepGeometry(F, [[-1.3, 0.95], [-1.15, 0.95], [-1.15, 0.75], [-1.3, 0.75], [-1.3, 0.95]], closed), mat);
       this.group.add(rim);
       const rim2 = new THREE.Mesh(sweepGeometry(F, [[1.15, 0.95], [1.3, 0.95], [1.3, 0.75], [1.15, 0.75], [1.15, 0.95]], closed), mat);
@@ -296,8 +298,9 @@ class Ride {
     // splash pools
     for (const p of this.pieces) if (p.type === 'splash') {
       const C = cellCenter(p.cx, p.cz);
-      const pool = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, 0.5, 20), new THREE.MeshStandardMaterial({ color: 0x2a9df4, roughness: 0.2, transparent: true, opacity: 0.85 }));
-      pool.position.set(C.x, 0.25, C.z); this.group.add(pool);
+      const basin = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, 0.4, 20), new THREE.MeshStandardMaterial({ color: 0x2a9ad8, roughness: 0.4 }));
+      basin.position.set(C.x, 0.2, C.z); this.group.add(basin);
+      const pool = new THREE.Mesh(new THREE.CircleGeometry(2.4, 24), waterMaterial()); pool.rotation.x = -Math.PI / 2; pool.position.set(C.x, 0.47, C.z); pool.renderOrder = 2; this.group.add(pool);
       const rimm = new THREE.Mesh(new THREE.TorusGeometry(2.4, 0.2, 8, 24), new THREE.MeshStandardMaterial({ color: 0xffffff })); rimm.rotation.x = Math.PI / 2; rimm.position.set(C.x, 0.5, C.z); this.group.add(rimm);
     }
     // invisible pick boxes so a piece can be tapped while building

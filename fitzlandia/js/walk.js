@@ -20,6 +20,7 @@ const Walk = {
     document.getElementById('camBtns').hidden = true;
   },
   exit() {
+    if (Spooky.active) Spooky.exit(false);
     this.active = false; this.unboard(true);
     World.camera.fov = 50; World.camera.updateProjectionMatrix();
     World.customCam = null; World.dragHook = null;
@@ -38,10 +39,12 @@ const Walk = {
       if (k.KeyA) mx -= 1; if (k.KeyD) mx += 1;
       if (k.ArrowLeft) this.yaw += 1.8 * dt; if (k.ArrowRight) this.yaw -= 1.8 * dt;
       const len = Math.hypot(mx, my); if (len > 1) { mx /= len; my /= len; }
+      const prev = this.pos.clone();
       if (len > 0.01) {
         this.pos.addScaledVector(this.forward(), my * this.speed * dt).addScaledVector(this.right(), mx * this.speed * dt);
         this.bob = (this.bob || 0) + dt * 9 * Math.min(1, len);
       }
+      if (Spooky.active) { Spooky.collide(prev); Spooky.update(dt); return; }
       const lim = parkHalf() - 0.8;
       this.pos.x = THREE.MathUtils.clamp(this.pos.x, -lim, lim); this.pos.z = THREE.MathUtils.clamp(this.pos.z, -lim, lim);
       this.collide();
@@ -87,6 +90,7 @@ const Walk = {
     Audio_.cheer(); toast(`🎢 Here we go! Hold on! 🙌`, 2000, 'gold'); renderContext();
   },
   rideAttraction(b) {
+    if (b.def.walkin) { Spooky.enter(b); return; }
     if (!b.seats || !b.seats.length) return;
     this.attach = { obj: b.seats[(Math.random() * b.seats.length) | 0], offset: b.type === 'ferris' ? new THREE.Vector3(0, -0.3, 0) : new THREE.Vector3(0, 2.0, 0), timer: b.type === 'ferris' ? 26 : 16, building: b };
     this.state = 'attached'; this.yaw = 0; this.pitch = 0; Audio_.cheer(); toast(`${b.def.icon} Enjoy the ride!`, 2000, 'gold'); renderContext();
@@ -101,6 +105,7 @@ const Walk = {
       const r = this.ride; if (r) { const s = r.station; const d = DIRS[s.h]; const c = cellCenter(s.cx, s.cz); this.pos.set(c.x - d.z * 3.5 + d.x * 2, 0, c.z + d.x * 3.5 + d.z * 2); this.yaw = Math.atan2(-(c.x - this.pos.x), -(c.z - this.pos.z)); }
       if (!silent && r) { toast(`🎉 ${r.name} was ${starStr(r.stars)}! Go again?`, 3000, 'gold'); Audio_.cheer(); }
     }
+    if (Spooky.active) Spooky.exit(false);
     if (this.state === 'attached' && this.attach) { const b = this.attach.building; if (b) { const d = b.door; this.pos.set(d.x, 0, d.z + 1.5); this.yaw = 0; } }
     this.state = 'walk'; this.ride = null; this.seat = null; this.attach = null; this.pitch = -0.05;
     if (this.active) renderContext();
@@ -130,6 +135,7 @@ const Walk = {
     }
     const bob = Math.sin(this.bob || 0) * 0.05;
     cam.position.set(this.pos.x, this.eye + bob, this.pos.z);
+    if (Spooky.active && Spooky.shake > 0) { cam.position.x += (Math.random() - 0.5) * 0.15; cam.position.y += (Math.random() - 0.5) * 0.15; }
     cam.quaternion.setFromEuler(this._e.set(this.pitch, this.yaw, 0, 'YXZ'));
     Audio_.setWhoosh(0);
   },

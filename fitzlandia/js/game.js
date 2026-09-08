@@ -18,7 +18,7 @@ const G = {
 };
 
 // ---------- occupancy ----------
-function buildingHeightLevels(b) { return b.type === 'ferris' ? 7 : b.type === 'carousel' ? 4 : b.type === 'tree' ? 2 : b.type === 'flowers' || b.type === 'fountain' ? 1 : 3; }
+function buildingHeightLevels(b) { return b.type === 'ferris' ? 7 : b.type === 'spooky' ? 5 : b.type === 'carousel' ? 4 : b.type === 'tree' ? 2 : b.type === 'flowers' || b.type === 'fountain' ? 1 : 3; }
 function occupied(cx, cz, lmin, lmax, excludeRide, excludeIdx) {
   for (const r of G.rides) for (let i = 0; i < r.pieces.length; i++) {
     if (r === excludeRide) continue;
@@ -91,6 +91,7 @@ const CHALLENGES = [
   { id: 'cork', icon: '🌪️', title: 'Corkscrew King', desc: 'A coaster with 2 Corkscrews', reward: 600, check: () => [maxStat(r => r.stats.corks), 2] },
   { id: 'inv4', icon: '🙃', title: 'Upside-Down Madness', desc: 'A coaster with 4 loops or corkscrews', reward: 1500, check: () => [maxStat(r => (r.stats.loops || 0) + (r.stats.corks || 0)), 4] },
   { id: 'ferris', icon: '🎡', title: 'Big Wheel', desc: 'Build a Ferris Wheel', reward: 500, check: () => [G.buildings.filter(b => b.type === 'ferris').length, 1] },
+  { id: 'spooky', icon: '👻', title: 'Brave Explorer', desc: 'Walk all the way through the Spooky House', reward: 600, check: () => [G.stats.spookySurvived || 0, 1] },
   { id: 'stars5', icon: '🌟', title: 'Five Star Ride!', desc: 'Get a 5-star ride', reward: 1000, check: () => [maxStat(r => r.stars), 5] },
   { id: 'rich', icon: '💰', title: 'Tycoon', desc: 'Earn $5000 in total', reward: 1000, check: () => [Math.floor(G.totalEarned), 5000] },
   { id: 'riders300', icon: '🎫', title: 'Ride Master', desc: '300 guests ride your rides', reward: 1200, check: () => [G.stats.ridersServed || 0, 300] },
@@ -174,7 +175,8 @@ function renderContext() {
       <div class="row"><div class="label">${G.shopType ? `Tap the grass to place your ${SHOPS[G.shopType].icon} ${SHOPS[G.shopType].name}` : 'Pick something to build, then tap the grass 🌿'}</div>${G.shopType ? '<button class="btn grey" data-action="cancelShop">✖ Cancel</button>' : ''}</div>`;
   } else if (m === 'walk') {
     const n = Walk.near; let mid = '';
-    if (Walk.state === 'waiting') mid = `<div class="label">⏳ Waiting for <b>${Walk.ride.name}</b> to pull in…</div><button class="btn grey" data-action="getOff">✖ Never mind</button>`;
+    if (Spooky.active) mid = `<div class="label">🏚️ Inside the <b>Spooky House</b>… follow the hallway to the EXIT! 👻</div><button class="btn red" data-action="getOff">🚪 Get me out!</button>`;
+    else if (Walk.state === 'waiting') mid = `<div class="label">⏳ Waiting for <b>${Walk.ride.name}</b> to pull in…</div><button class="btn grey" data-action="getOff">✖ Never mind</button>`;
     else if (Walk.state === 'riding') mid = `<div class="label">🙌 Riding <b>${Walk.ride.name}</b>! Drag to look around.</div><button class="btn red" data-action="getOff">🚪 Get off</button>`;
     else if (Walk.state === 'attached') mid = `<div class="label">${Walk.attach.building.def.icon} Riding the <b>${Walk.attach.building.def.name}</b>! Drag to look around.</div><button class="btn red" data-action="getOff">🚪 Get off</button>`;
     else if (n && n.kind === 'ride') mid = n.ride.open ? `<div class="label">${n.ride.water ? '🌊' : '🎢'} <b>${n.ride.name}</b> ${starStr(n.ride.stars)}</div><button class="btn green big" data-action="walkRide">🎟️ RIDE IT!</button>` : `<div class="label">🔧 <b>${n.ride.name}</b> is not open yet</div>`;
@@ -236,7 +238,7 @@ $('#context').addEventListener('click', e => {
   else if (a === 'walkRide') Walk.requestRide(Walk.near.ride);
   else if (a === 'walkShop') Walk.visitShop(Walk.near.building);
   else if (a === 'walkAttraction') Walk.rideAttraction(Walk.near.building);
-  else if (a === 'getOff') Walk.unboard(true);
+  else if (a === 'getOff') { if (Spooky.active) Spooky.exit(false); else Walk.unboard(true); }
   else if (a === 'exitWalk') setMode('view');
   else if (a === 'rename') renameRide(G.selected.ride);
   else if (a === 'edit') editRide(G.selected.ride);
@@ -543,7 +545,7 @@ function computeHint() {
     if (!r.water && !types.some(t => PIECES[t].inversion) && r.pieces.length < 12) return 'Too fast? Use Brakes 🛑 or a Bank Turn 🏎️. Too slow? Add a Booster 🚀. Loops ➰ need speed 12!';
     return 'Bring the track back to the Station 🏠 to make a loop. Stuck? Press 🧲 Auto-Finish!';
   }
-  if (m === 'walk') return Walk.state === 'walk' ? 'Walk up to a ride and press RIDE IT! Drag on the screen to look around.' : '';
+  if (m === 'walk') return Spooky.active ? '' : (Walk.state === 'walk' ? 'Walk up to a ride and press RIDE IT! Drag on the screen to look around.' : '');
   if (m === 'test') return 'Watch the ride! It must make it all the way around without getting stuck or going too fast on turns.';
   if (m === 'placeShop') return 'Tap an empty spot on the grass to build it. Guests will come and spend money! 💰';
   if (m === 'shops') return 'Shops and games earn money from guests. Rides earn tickets. Use money to build MORE!';
@@ -651,7 +653,7 @@ function main() {
     else Audio_.setWhoosh(0);
     Particles.update(dt);
     updateCameraTransform();
-    World.renderer.render(World.scene, World.camera);
+    World.renderer.render(Spooky.active ? Spooky.scene : World.scene, World.camera);
     saveT += dt; if (saveT > 8) { saveT = 0; save(); }
     chalT += dt; if (chalT > 1) { chalT = 0; checkChallenges(); updateTopbar(); if (G.mode === 'shops' || G.mode === 'placeShop' || G.mode === 'build') refreshAffordability(); }
     hintT += dt; if (hintT > 0.5) { hintT = 0; setHint(computeHint()); }

@@ -11,11 +11,12 @@ const SHOPS = {
   duckpond: { name: 'Duck Pond',     icon: '🦆', cost: 100, earn: 4, color: 0x7ed957, roof: '#7ed957', roof2: '#ffffff', kind: 'booth', size: 1, gift: '🦆' },
   carousel: { name: 'Carousel',      icon: '🎠', cost: 400, earn: 6, color: 0xffd93d, kind: 'attraction', size: 2, stars: 1, gift: '❤️' },
   ferris:   { name: 'Ferris Wheel',  icon: '🎡', cost: 800, earn: 8, color: 0xff3d6e, kind: 'attraction', size: 2, stars: 2, gift: '❤️' },
+  spooky:   { name: 'Spooky House',  icon: '👻', cost: 500, earn: 7, color: 0x3b2450, kind: 'attraction', size: 2, stars: 2, gift: '😱', walkin: true },
   tree:     { name: 'Tree',          icon: '🌳', cost: 20,  earn: 0, kind: 'deco', size: 1 },
   fountain: { name: 'Fountain',      icon: '⛲', cost: 80,  earn: 0, kind: 'deco', size: 1 },
   flowers:  { name: 'Flowers',       icon: '🌷', cost: 15,  earn: 0, kind: 'deco', size: 1 },
 };
-const SHOP_ORDER = ['candy', 'icecream', 'toy', 'balloon', 'ringtoss', 'duckpond', 'carousel', 'ferris', 'tree', 'flowers', 'fountain'];
+const SHOP_ORDER = ['candy', 'icecream', 'toy', 'balloon', 'ringtoss', 'duckpond', 'carousel', 'ferris', 'spooky', 'tree', 'flowers', 'fountain'];
 
 let _bId = 1;
 class Building {
@@ -59,7 +60,7 @@ function buildBuildingMesh(b) {
     // prizes / props
     if (b.type === 'balloon') for (let i = 0; i < 5; i++) { const bal = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), std([0xff5252, 0x4fb0ff, 0xffd93d, 0x7ed957, 0xff6fb5][i])); bal.position.set(-1 + i * 0.5, 2.0 + (i % 2) * 0.4, -0.9); g.add(bal); }
     if (b.type === 'ringtoss') for (let i = 0; i < 6; i++) { const peg = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.5, 6), std(0xffffff)); peg.position.set(-1 + (i % 3) * 1, 1.35, -0.5 + Math.floor(i / 3) * 0.7); g.add(peg); const ring = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.05, 6, 12), std(0xff3d6e)); ring.rotation.x = Math.PI / 2; ring.position.copy(peg.position); ring.position.y = 1.12 + Math.random() * 0.3; g.add(ring); }
-    if (b.type === 'duckpond') { const pond = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 0.2, 16), std(0x3fb4ff, { roughness: 0.2 })); pond.position.y = 1.2; g.add(pond); for (let i = 0; i < 4; i++) { const duck = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6), std(0xffe14d)); const a = i * 1.6; duck.position.set(Math.cos(a) * 0.7, 1.4, Math.sin(a) * 0.7); g.add(duck); } }
+    if (b.type === 'duckpond') { const pond = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 0.2, 16), std(0x2a9ad8)); pond.position.y = 1.2; g.add(pond); const ps = new THREE.Mesh(new THREE.CircleGeometry(1.2, 20), waterMaterial()); ps.rotation.x = -Math.PI / 2; ps.position.y = 1.31; g.add(ps); for (let i = 0; i < 4; i++) { const duck = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6), std(0xffe14d)); const a = i * 1.6; duck.position.set(Math.cos(a) * 0.7, 1.4, Math.sin(a) * 0.7); g.add(duck); } }
     addSign(g, d.icon + ' ' + d.name, hex(d.color), 2.9, 2.9, 1.3);
   } else if (b.type === 'carousel') {
     const base = new THREE.Mesh(new THREE.CylinderGeometry(3.6, 3.8, 0.5, 24), std(0xfff3c4)); base.position.y = 0.25; base.receiveShadow = true; g.add(base);
@@ -98,6 +99,19 @@ function buildBuildingMesh(b) {
     g.add(wheel); b.seats = gondolas;
     b.anim = (t) => { wheel.rotation.z = t * 0.25; for (const gd of gondolas) { const a = gd.userData.a; gd.position.set(Math.cos(a) * R, Math.sin(a) * R, 0); gd.rotation.z = -wheel.rotation.z; } };
     addSign(g, '🎡 Ferris Wheel', '#ff3d6e', 5, 1.2, 3.2);
+  } else if (b.type === 'spooky') {
+    const wood = std(0x3b2450, { roughness: 0.9 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(6.4, 5.2, 5.6), wood); body.position.y = 2.6; body.castShadow = true; body.receiveShadow = true; g.add(body);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(5.2, 3.4, 4), std(0x1c1026)); roof.position.y = 6.9; roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
+    const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 3.5, 8), wood); tower.position.set(2.4, 6.2, -1.6); g.add(tower);
+    const cap = new THREE.Mesh(new THREE.ConeGeometry(1.2, 1.8, 8), std(0x1c1026)); cap.position.set(2.4, 8.8, -1.6); g.add(cap);
+    const glow = new THREE.MeshBasicMaterial({ color: 0x7dff9a });
+    for (const [x, y] of [[-2, 3.4], [2, 3.4], [-2, 1.4], [2, 1.4]]) { const win = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.0, 0.1), glow); win.position.set(x, y, 2.83); g.add(win); }
+    const door = new THREE.Mesh(new THREE.BoxGeometry(1.6, 2.6, 0.12), std(0x120a18)); door.position.set(0, 1.3, 2.83); g.add(door);
+    const ghost = new THREE.Mesh(new THREE.SphereGeometry(0.6, 12, 10), std(0xffffff, { emissive: 0x99aaff, emissiveIntensity: 0.5 })); ghost.scale.y = 1.3; ghost.position.set(-2.6, 6.2, 1.2); g.add(ghost);
+    const pl = new THREE.PointLight(0x7dff9a, 1.2, 12, 2); pl.position.set(0, 2.5, 3.5); g.add(pl);
+    b.anim = (t) => { ghost.position.y = 6.2 + Math.sin(t * 1.5) * 0.4; ghost.position.x = -2.6 + Math.sin(t * 0.7) * 0.6; pl.intensity = 1.0 + Math.sin(t * 9) * 0.4 + (Math.random() < 0.03 ? 1.5 : 0); };
+    addSign(g, '👻 Spooky House', '#7dff9a', 5, 4.6, 2.9);
   } else if (b.type === 'tree') {
     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.32, 1.6, 8), std(0x795548)); trunk.position.y = 0.8; trunk.castShadow = true; g.add(trunk);
     const greens = [0x2e9e4f, 0x3cb55e, 0x27893f];
@@ -105,7 +119,8 @@ function buildBuildingMesh(b) {
     g.rotation.y = Math.random() * 6;
   } else if (b.type === 'fountain') {
     const basin = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.7, 0.6, 20), std(0xd7ccc8)); basin.position.y = 0.3; basin.castShadow = true; g.add(basin);
-    const water = new THREE.Mesh(new THREE.CylinderGeometry(1.45, 1.45, 0.1, 20), std(0x3fb4ff, { roughness: 0.15, transparent: true, opacity: 0.85 })); water.position.y = 0.6; g.add(water);
+    const wbase = new THREE.Mesh(new THREE.CylinderGeometry(1.45, 1.45, 0.1, 20), std(0x2a9ad8)); wbase.position.y = 0.55; g.add(wbase);
+    const water = new THREE.Mesh(new THREE.CircleGeometry(1.45, 24), waterMaterial()); water.rotation.x = -Math.PI / 2; water.position.y = 0.62; water.renderOrder = 2; g.add(water);
     const col = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.3, 1.6, 8), std(0xd7ccc8)); col.position.y = 1.2; g.add(col);
     const jet = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), std(0x8fd8ff, { transparent: true, opacity: 0.7 })); jet.position.y = 2.2; g.add(jet);
     b.anim = (t) => { jet.scale.setScalar(0.8 + Math.sin(t * 6) * 0.25); jet.position.y = 2.2 + Math.sin(t * 6) * 0.2; };

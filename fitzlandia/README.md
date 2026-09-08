@@ -38,7 +38,8 @@ If the laptop's firewall asks, allow Python to accept incoming connections.
 - **🧪 TEST RIDE**: a car runs the track using real energy rules. If it fails, the game
   says why and marks the spot with a red ring.
 - **🏪 Shops**: candy, ice cream, toys, balloons, ring toss, duck pond, carousel, Ferris
-  wheel, trees, fountains, flowers. **More Land** grows the park.
+  wheel, Spooky House (walk through it in Walk mode for jump scares), trees, fountains,
+  flowers. **More Land** grows the park.
 - **🏆 Challenges** pay money rewards. Stars come from ride ratings and attractions.
 - Camera: one finger spins, two fingers move and zoom, **🎥 Ride Cam** rides in the front seat.
 
@@ -67,6 +68,8 @@ js/world.js     renderer, sky, city skyline, park ground, camera controls
 js/track.js     track pieces, ride rules, path geometry, vehicles, physics, rating
 js/buildings.js shops, games, carousel, Ferris wheel, decorations
 js/guests.js    visitors: wander, shop, queue, ride
+js/walk.js      first-person visitor mode (joystick, look, board rides)
+js/spooky.js    the Spooky House interior scene and jump scares
 js/game.js      game state, economy, challenges, save/load, UI
 vendor/three.min.js  Three.js r158 (local copy so no internet is needed)
 serve.py        LAN web server for the iPad

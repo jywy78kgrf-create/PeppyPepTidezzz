@@ -83,14 +83,15 @@ function stripeTexture(c1, c2) {
 // ---------- geometry helpers ----------
 /** Sweep a 2D profile (array of [side, up]) along frames [{p,t,n,b}] -> BufferGeometry (flat-shaded per segment). */
 function sweepGeometry(frames, profile, closed) {
-  const pos = [], nor = [], idx = [];
+  const pos = [], nor = [], uv = [], idx = [];
   const nF = frames.length, nS = profile.length - 1;
   const tmpN = new THREE.Vector3();
+  const along = [0]; for (let i = 1; i < nF; i++) along.push(along[i - 1] + frames[i].p.distanceTo(frames[i - 1].p));
   for (let k = 0; k < nS; k++) {
     const a = profile[k], b = profile[k + 1];
     // 2D outward normal of segment (perpendicular)
     const ex = b[0] - a[0], ey = b[1] - a[1], len = Math.hypot(ex, ey) || 1;
-    const nx = ey / len, ny = -ex / len;
+    const nx = -ey / len, ny = ex / len; // outward for a clockwise (side, up) profile; consistent with the CCW winding below
     const base = pos.length / 3;
     for (let i = 0; i < nF; i++) {
       const f = frames[i];
@@ -98,6 +99,7 @@ function sweepGeometry(frames, profile, closed) {
       for (const pt of [a, b]) {
         pos.push(f.p.x + f.n.x * pt[0] + f.b.x * pt[1], f.p.y + f.n.y * pt[0] + f.b.y * pt[1], f.p.z + f.n.z * pt[0] + f.b.z * pt[1]);
         nor.push(tmpN.x, tmpN.y, tmpN.z);
+        uv.push(along[i] / 4, pt === a ? k / nS : (k + 1) / nS);
       }
     }
     const count = closed ? nF : nF - 1;
@@ -110,8 +112,47 @@ function sweepGeometry(frames, profile, closed) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setIndex(idx);
   return g;
+}
+
+// ---------- water (shared, animated) ----------
+const Water = { map: null, normal: null };
+function waterTextures() {
+  if (Water.map) return Water;
+  Water.map = canvasTex(256, 256, (ctx, w, h) => {
+    ctx.fillStyle = '#9fe4ff'; ctx.fillRect(0, 0, w, h);
+    // soft caustic streaks
+    for (let i = 0; i < 70; i++) {
+      ctx.strokeStyle = `rgba(255,255,255,${0.10 + Math.random() * 0.25})`; ctx.lineWidth = 1 + Math.random() * 3;
+      ctx.beginPath(); const x = Math.random() * w, y = Math.random() * h; ctx.moveTo(x, y);
+      ctx.bezierCurveTo(x + 40 - Math.random() * 80, y + 30, x + 60, y - 30 + Math.random() * 60, x + 90 - Math.random() * 40, y + 10); ctx.stroke();
+    }
+    for (let i = 0; i < 40; i++) { ctx.fillStyle = `rgba(60,170,230,${Math.random() * 0.25})`; ctx.beginPath(); ctx.ellipse(Math.random() * w, Math.random() * h, 8 + Math.random() * 30, 4 + Math.random() * 10, Math.random() * 3, 0, 6.3); ctx.fill(); }
+  }, { repeat: [1, 1] });
+  // ripple normal map from a sum of sines
+  const N = 128, c = document.createElement('canvas'); c.width = N; c.height = N; const ctx = c.getContext('2d'); const img = ctx.createImageData(N, N);
+  const hgt = (x, y) => Math.sin(x * 0.25 + y * 0.1) * 0.5 + Math.sin(y * 0.33 - x * 0.07) * 0.35 + Math.sin((x + y) * 0.15) * 0.25;
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const dx = hgt((x + 1) % N, y) - hgt((x - 1 + N) % N, y), dy = hgt(x, (y + 1) % N) - hgt(x, (y - 1 + N) % N);
+    const nx = -dx * 1.4, ny = -dy * 1.4, nz = 1; const l = Math.hypot(nx, ny, nz);
+    const o = (y * N + x) * 4; img.data[o] = (nx / l * 0.5 + 0.5) * 255; img.data[o + 1] = (ny / l * 0.5 + 0.5) * 255; img.data[o + 2] = (nz / l * 0.5 + 0.5) * 255; img.data[o + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  Water.normal = new THREE.CanvasTexture(c); Water.normal.wrapS = Water.normal.wrapT = THREE.RepeatWrapping;
+  return Water;
+}
+/** A translucent, rippling light-blue water material. `flow` scales the scrolling speed. */
+function waterMaterial(opts = {}) {
+  const w = waterTextures();
+  const m = new THREE.MeshStandardMaterial({ color: opts.color || 0xbdf0ff, map: w.map, normalMap: w.normal, normalScale: new THREE.Vector2(0.55, 0.55),
+    roughness: 0.08, metalness: 0.12, transparent: true, opacity: opts.opacity || 0.72, side: THREE.DoubleSide, depthWrite: false });
+  return m;
+}
+function animateWater(dt) {
+  const w = Water; if (!w.map) return;
+  w.map.offset.x -= dt * 0.35; w.normal.offset.x -= dt * 0.25; w.normal.offset.y += dt * 0.05;
 }
 
 /** Merge many boxes (with per-box color and UV scaled to size) into one geometry. */
@@ -480,6 +521,7 @@ function panCamera(dx, dy) {
 
 // ---------- ambient animation ----------
 function animateWorld(dt, t) {
+  animateWater(dt);
   for (const s of World.clouds) { s.position.x += s.userData.speed * dt; if (s.position.x > 750) s.position.x = -750; }
   for (const car of World.cars) { const u = car.userData; u.a += u.speed * dt; car.position.set(Math.cos(u.a) * u.r, 0, Math.sin(u.a) * u.r); car.rotation.y = -u.a + (u.speed > 0 ? Math.PI : 0); }
   for (const b of World.balloons) { const u = b.userData; b.position.y += u.vy * dt; b.position.x += Math.sin(t * 0.5 + u.wob) * dt * 1.2; if (b.position.y > 90) { b.position.y = 6; b.position.x = (Math.random() - 0.5) * 120; b.position.z = (Math.random() - 0.5) * 120; } }

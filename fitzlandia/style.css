@@ -86,3 +86,6 @@ button { font-family: inherit; font-weight: 700; cursor: pointer; border: 0; }
 #joyKnob::after { content:"🚶"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:30px; }
 #camBtns[hidden] { display:none !important; }
 @media (max-width: 700px) { #joy { width:110px; height:110px; bottom:calc(200px + var(--safe-b)); } }
+
+#flash { position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; transition:opacity .35s; }
+#flash.on { opacity:.85; transition:none; }
