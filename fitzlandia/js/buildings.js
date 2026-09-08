@@ -77,6 +77,7 @@ function buildBuildingMesh(b) {
       spin.add(h);
     }
     b.anim = (t) => { spin.rotation.y = t * 0.6; spin.children.forEach(h => { h.position.y = Math.sin(t * 3 + h.userData.phase) * 0.35 + 0.35; }); };
+    b.seats = spin.children.slice();
     addSign(g, '🎠 Carousel', '#ff3d6e', 4.5, 6.5, 0);
   } else if (b.type === 'ferris') {
     const R = 5;
@@ -94,7 +95,7 @@ function buildBuildingMesh(b) {
       const top = new THREE.Mesh(new THREE.ConeGeometry(0.8, 0.5, 8), std(gcol[i])); top.position.y = -0.1; gd.add(top);
       gd.userData.a = a; wheel.add(gd); gondolas.push(gd);
     }
-    g.add(wheel);
+    g.add(wheel); b.seats = gondolas;
     b.anim = (t) => { wheel.rotation.z = t * 0.25; for (const gd of gondolas) { const a = gd.userData.a; gd.position.set(Math.cos(a) * R, Math.sin(a) * R, 0); gd.rotation.z = -wheel.rotation.z; } };
     addSign(g, '🎡 Ferris Wheel', '#ff3d6e', 5, 1.2, 3.2);
   } else if (b.type === 'tree') {

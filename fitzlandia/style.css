@@ -79,3 +79,10 @@ button { font-family: inherit; font-weight: 700; cursor: pointer; border: 0; }
   #tabs button { font-size:24px; min-height:58px; }
   .statgrid { grid-template-columns:1fr 1fr; }
 }
+
+#joy { position:absolute; left:18px; bottom:calc(215px + var(--safe-b)); width:130px; height:130px; border-radius:50%; background:rgba(255,255,255,.35); border:3px solid rgba(255,255,255,.8); touch-action:none; box-shadow:0 6px 20px rgba(0,0,0,.2); }
+#joy[hidden] { display:none !important; }
+#joyKnob { position:absolute; left:50%; top:50%; width:60px; height:60px; margin:-30px 0 0 -30px; border-radius:50%; background:var(--yellow); box-shadow:0 4px 0 rgba(0,0,0,.2); pointer-events:none; }
+#joyKnob::after { content:"🚶"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:30px; }
+#camBtns[hidden] { display:none !important; }
+@media (max-width: 700px) { #joy { width:110px; height:110px; bottom:calc(200px + var(--safe-b)); } }

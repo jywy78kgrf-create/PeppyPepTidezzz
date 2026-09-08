@@ -124,6 +124,8 @@ function updateTopbar() {
 // ---------- modes ----------
 function setMode(mode, data) {
   if (G.mode === 'test' && mode !== 'test') endTestVisuals();
+  if (G.mode === 'walk' && mode !== 'walk') Walk.exit();
+  if (mode === 'walk' && G.mode !== 'walk') Walk.enter();
   G.mode = mode; G.selected = null;
   World.grid.visible = (mode === 'placeStation' || mode === 'build' || mode === 'placeShop');
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.mode === tabFor(mode)));
@@ -134,7 +136,7 @@ function setMode(mode, data) {
   ghostClear();
   renderContext();
 }
-function tabFor(mode) { return { placeStation: G.pending && G.pending.type === 'water' ? 'water' : 'coaster', build: G.sel && G.sel.water ? 'water' : 'coaster', placeShop: 'shops', shops: 'shops', view: 'view', test: 'view' }[mode] || 'view'; }
+function tabFor(mode) { return { placeStation: G.pending && G.pending.type === 'water' ? 'water' : 'coaster', build: G.sel && G.sel.water ? 'water' : 'coaster', placeShop: 'shops', shops: 'shops', view: 'view', test: 'view', walk: 'walk' }[mode] || 'view'; }
 
 function renderContext() {
   const ctx = $('#context'); let html = '';
@@ -170,6 +172,16 @@ function renderContext() {
     html = `<div class="row pieces">${SHOP_ORDER.map(t => { const d = SHOPS[t]; const ok = G.money >= d.cost; return `<button class="piece ${G.shopType === t ? 'on' : ''} ${ok ? '' : 'dim'}" data-action="shop" data-type="${t}"><span class="ic">${d.icon}</span><span class="nm">${d.name}</span><span class="cost">$${d.cost}</span></button>`; }).join('')}
       <button class="piece land ${G.money >= nextLand ? '' : 'dim'}" data-action="land" ${World.parkCells >= MAX_PARK ? 'disabled' : ''}><span class="ic">🌱</span><span class="nm">More Land</span><span class="cost">${World.parkCells >= MAX_PARK ? 'MAX' : '$' + nextLand}</span></button></div>
       <div class="row"><div class="label">${G.shopType ? `Tap the grass to place your ${SHOPS[G.shopType].icon} ${SHOPS[G.shopType].name}` : 'Pick something to build, then tap the grass 🌿'}</div>${G.shopType ? '<button class="btn grey" data-action="cancelShop">✖ Cancel</button>' : ''}</div>`;
+  } else if (m === 'walk') {
+    const n = Walk.near; let mid = '';
+    if (Walk.state === 'waiting') mid = `<div class="label">⏳ Waiting for <b>${Walk.ride.name}</b> to pull in…</div><button class="btn grey" data-action="getOff">✖ Never mind</button>`;
+    else if (Walk.state === 'riding') mid = `<div class="label">🙌 Riding <b>${Walk.ride.name}</b>! Drag to look around.</div><button class="btn red" data-action="getOff">🚪 Get off</button>`;
+    else if (Walk.state === 'attached') mid = `<div class="label">${Walk.attach.building.def.icon} Riding the <b>${Walk.attach.building.def.name}</b>! Drag to look around.</div><button class="btn red" data-action="getOff">🚪 Get off</button>`;
+    else if (n && n.kind === 'ride') mid = n.ride.open ? `<div class="label">${n.ride.water ? '🌊' : '🎢'} <b>${n.ride.name}</b> ${starStr(n.ride.stars)}</div><button class="btn green big" data-action="walkRide">🎟️ RIDE IT!</button>` : `<div class="label">🔧 <b>${n.ride.name}</b> is not open yet</div>`;
+    else if (n && n.kind === 'shop') mid = `<div class="label">${n.building.def.icon} <b>${n.building.def.name}</b></div><button class="btn green big" data-action="walkShop">${n.building.def.kind === 'booth' ? '🎯 PLAY!' : '🛍️ BUY!'}</button>`;
+    else if (n && n.kind === 'attraction') mid = `<div class="label">${n.building.def.icon} <b>${n.building.def.name}</b></div><button class="btn green big" data-action="walkAttraction">🎟️ RIDE IT!</button>`;
+    else mid = `<div class="label">🚶 Walk up to a ride or shop! Joystick = walk · drag = look · (keyboard: WASD + arrows)</div>`;
+    html = `<div class="row">${mid}<button class="btn grey" data-action="exitWalk">👀 Stop walking</button></div>`;
   } else if (m === 'test') {
     html = `<div class="row"><div class="label">🧪 Testing <b>${G.test.ride.name}</b>… Speed: <span id="tSpeed">0</span></div>
       <button class="btn blue" data-action="rideCam">🎥 Ride Cam</button><button class="btn red" data-action="stopTest">✖ Stop</button></div>`;
@@ -178,6 +190,7 @@ function renderContext() {
     if (s && s.kind === 'ride') {
       const r = s.ride; const st = r.stats || {};
       html = `<div class="row"><div class="label">${r.water ? '🌊' : '🎢'} <b>${r.name}</b> ${r.open ? starStr(r.stars) : '(not finished)'}${r.open ? ` · 🎟️ ${r.ridersServed} riders · 💰 $${Math.floor(r.earned)} earned · ⚡ top speed ${Math.floor(st.maxV || 0)}` : ''}</div>
+        ${r.open ? '<button class="btn blue" data-action="rideCamThis">🎥 Ride Cam</button>' : ''}
         <button class="btn blue" data-action="rename">✏️ Name</button>
         <button class="btn green" data-action="edit">🔧 ${r.open ? 'Edit (closes ride)' : 'Keep Building'}</button>
         <button class="btn red" data-action="deleteRide">🗑️ Remove</button></div>`;
@@ -217,8 +230,14 @@ $('#context').addEventListener('click', e => {
   else if (a === 'cancelShop') { G.shopType = null; setMode('shops'); }
   else if (a === 'land') buyLand();
   else if (a === 'rideCam') toggleRideCam(G.test.ride.vehicle);
-  else if (a === 'rideCamAny') { const r = G.rides.find(x => x.open && x.vehicle); if (r) toggleRideCam(r.vehicle); }
+  else if (a === 'rideCamAny') cycleRideCam();
+  else if (a === 'rideCamThis') { const r = G.selected.ride; if (r.vehicle) { World.rideCam = { vehicle: r.vehicle }; toast('🎥 Riding ' + r.name + ' — press 🎥 again to stop'); } }
   else if (a === 'stopTest') { failTest(null); setMode('build', { ride: G.test ? G.test.ride : G.sel }); }
+  else if (a === 'walkRide') Walk.requestRide(Walk.near.ride);
+  else if (a === 'walkShop') Walk.visitShop(Walk.near.building);
+  else if (a === 'walkAttraction') Walk.rideAttraction(Walk.near.building);
+  else if (a === 'getOff') Walk.unboard(true);
+  else if (a === 'exitWalk') setMode('view');
   else if (a === 'rename') renameRide(G.selected.ride);
   else if (a === 'edit') editRide(G.selected.ride);
   else if (a === 'deleteBuilding') deleteBuilding(G.selected.building);
@@ -232,6 +251,7 @@ document.querySelectorAll('#tabs button').forEach(btn => btn.addEventListener('c
     if (G.mode === 'build' && G.sel && G.sel.type === t) return;
     if (unfinished) setMode('build', { ride: unfinished }); else setMode('placeStation', { type: t });
   } else if (t === 'shops') { G.shopType = null; setMode('shops'); }
+  else if (t === 'walk') setMode('walk');
   else setMode('view');
 }));
 $('#btnChallenges').addEventListener('click', () => { Audio_.click(); showChallenges(); });
@@ -240,8 +260,17 @@ $('#modal').addEventListener('click', e => { if (e.target.id === 'modal' && $('#
 $('#camIn').addEventListener('click', () => { World.cam.dist *= 0.75; });
 $('#camOut').addEventListener('click', () => { World.cam.dist *= 1.33; });
 $('#camFind').addEventListener('click', () => { World.rideCam = null; if (G.sel && (G.mode === 'build')) { const c = G.sel.cursor; const p = cellCenter(c.cx, c.cz); focusCamera(p.x, p.z); } else focusCamera(0, 0, 60); });
-$('#camRide').addEventListener('click', () => { if (World.rideCam) { World.rideCam = null; return; } const v = G.test ? G.test.ride.vehicle : (G.rides.find(r => r.open && r.vehicle) || {}).vehicle; if (v) toggleRideCam(v); else toast('Open a ride first to use Ride Cam 🎥'); });
+$('#camRide').addEventListener('click', () => { if (G.test) { toggleRideCam(G.test.ride.vehicle); return; } if (G.mode === 'view' && G.selected && G.selected.kind === 'ride' && G.selected.ride.vehicle && !World.rideCam) { World.rideCam = { vehicle: G.selected.ride.vehicle }; toast('🎥 Riding ' + G.selected.ride.name); return; } cycleRideCam(); });
 function toggleRideCam(v) { World.rideCam = World.rideCam && World.rideCam.vehicle === v ? null : { vehicle: v }; }
+/** Each press moves the ride cam to the next open ride, then off. */
+function cycleRideCam() {
+  const open = G.rides.filter(r => r.open && r.vehicle);
+  if (!open.length) { toast('Open a ride first to use Ride Cam 🎥'); return; }
+  let i = World.rideCam ? open.findIndex(r => r.vehicle === World.rideCam.vehicle) : -1;
+  i++;
+  if (i >= open.length) { World.rideCam = null; toast('🎥 Ride cam off'); }
+  else { World.rideCam = { vehicle: open[i].vehicle }; toast(`🎥 Riding ${open[i].name}${open.length > 1 ? ' — press 🎥 again for the next ride' : ''}`); }
+}
 
 // ---------- building actions ----------
 function addPiece(type) {
@@ -322,7 +351,7 @@ function confirmDeleteRide(r) {
   $('#mNo').onclick = closeModal;
 }
 function deleteRide(r, refund) {
-  Guests.clearRide(r);
+  Guests.clearRide(r); if (Walk.ride === r) Walk.unboard(true);
   if (r.vehicle) { disposeObject(r.vehicle.group); r.vehicle = null; }
   disposeObject(r.group); G.rides.splice(G.rides.indexOf(r), 1);
   G.money += refund; if (G.sel === r) G.sel = null; if (World.rideCam && World.rideCam.vehicle && World.rideCam.vehicle.ride === r) World.rideCam = null;
@@ -491,6 +520,7 @@ function runOpenRides(dt) {
         const n = Guests.unload(G, r, veh);
         if (n) { const s = r.station; const c = cellCenter(s.cx, s.cz).setY(5); const amt = n * ticketPrice(r); r.earned += amt; G.earn(amt, c, '🎟️'); }
         veh.boarded = false;
+        Walk.onRideArrived(r);
       }
     });
     if (res && res.reason) { // should not happen for a tested ride; reset safely
@@ -513,6 +543,7 @@ function computeHint() {
     if (!r.water && !types.some(t => PIECES[t].inversion) && r.pieces.length < 12) return 'Too fast? Use Brakes 🛑 or a Bank Turn 🏎️. Too slow? Add a Booster 🚀. Loops ➰ need speed 12!';
     return 'Bring the track back to the Station 🏠 to make a loop. Stuck? Press 🧲 Auto-Finish!';
   }
+  if (m === 'walk') return Walk.state === 'walk' ? 'Walk up to a ride and press RIDE IT! Drag on the screen to look around.' : '';
   if (m === 'test') return 'Watch the ride! It must make it all the way around without getting stuck or going too fast on turns.';
   if (m === 'placeShop') return 'Tap an empty spot on the grass to build it. Guests will come and spend money! 💰';
   if (m === 'shops') return 'Shops and games earn money from guests. Rides earn tickets. Use money to build MORE!';
@@ -566,7 +597,8 @@ function showHelp() {
     <li>🧪 <b>TEST</b> the ride. If it works, guests can ride it and you earn money!</li>
     <li>🏪 <b>Shops</b>: candy, toys, games and big attractions earn money too. 🌱 Buy more land to grow.</li>
     <li>🏆 <b>Challenges</b> give big money rewards.</li>
-    <li>👆 One finger: spin the camera. Two fingers: move and zoom. 🎥 Ride Cam puts you in the front seat!</li>
+    <li>👆 One finger: spin the camera. Two fingers: move and zoom. 🎥 Ride Cam puts you in the front seat (press again for the next ride).</li>
+    <li>🚶 <b>Walk</b>: be a visitor! Joystick to walk, drag to look, walk up to any ride, shop or the Ferris Wheel and press the button.</li>
   </ul><div class="mrow"><button class="btn grey" onclick="closeModal()">Let's go!</button></div>`);
 }
 
@@ -593,7 +625,7 @@ function load() {
 function main() {
   const canvas = document.getElementById('c');
   initWorld(canvas); Particles.init(); Audio_.init();
-  initControls(canvas, onTap);
+  initControls(canvas, onTap); initJoystick();
   const loaded = load();
   setMode('view');
   if (!loaded) { showHelp(); }
@@ -607,6 +639,7 @@ function main() {
     Guests.update(G, dt, G.time);
     G.stats.maxGuests = Math.max(G.stats.maxGuests || 0, Guests.list.length);
     runOpenRides(dt);
+    Walk.update(dt);
     if (G.test) {
       const t = G.test; const v = t.ride.vehicle;
       const res = stepVehicle(v, dt, t.stats, { onSplash: (f, sp) => { Particles.splash(f.p.clone()); Audio_.splash(); } });

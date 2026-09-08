@@ -391,6 +391,7 @@ function rebuildPark() {
 // ---------- camera ----------
 function updateCameraTransform() {
   const c = World.cam, cam = World.camera;
+  if (World.customCam) { World.customCam(); return; }
   if (World.rideCam && World.rideCam.vehicle) {
     const v = World.rideCam.vehicle; const f = v.frontFrame;
     if (f) {
@@ -447,9 +448,10 @@ function initControls(canvas, onTap) {
     if (pts.size === 1) {
       if (!dragging && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 8) dragging = true;
       if (dragging) {
-        if (p.btn === 2 || p.shift) panCamera(dx, dy); else { c.az -= dx * 0.006; c.pol -= dy * 0.005; }
+        if (World.dragHook && World.dragHook(dx, dy)) { /* consumed (walk look) */ }
+        else if (p.btn === 2 || p.shift) panCamera(dx, dy); else { c.az -= dx * 0.006; c.pol -= dy * 0.005; }
       }
-    } else if (pts.size === 2) {
+    } else if (pts.size === 2 && !World.dragHook) {
       const [a, b] = [...pts.values()]; const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; const d = Math.hypot(a.x - b.x, a.y - b.y);
       if (lastMid) panCamera(mid.x - lastMid.x, mid.y - lastMid.y);
       if (lastDist) c.dist *= lastDist / d;
@@ -465,7 +467,7 @@ function initControls(canvas, onTap) {
     } else { lastMid = null; lastDist = 0; }
   };
   canvas.addEventListener('pointerup', end); canvas.addEventListener('pointercancel', end);
-  canvas.addEventListener('wheel', e => { e.preventDefault(); c.dist *= Math.exp(e.deltaY * 0.0012); }, { passive: false });
+  canvas.addEventListener('wheel', e => { e.preventDefault(); if (!World.dragHook) c.dist *= Math.exp(e.deltaY * 0.0012); }, { passive: false });
   canvas.addEventListener('contextmenu', e => e.preventDefault());
 }
 function panCamera(dx, dy) {
