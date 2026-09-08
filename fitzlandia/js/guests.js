@@ -10,6 +10,21 @@ function sharedGeo(name, make) { return _geo[name] || (_geo[name] = make()); }
 const _mats = new Map();
 function sharedMat(color) { if (!_mats.has(color)) _mats.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.8 })); return _mats.get(color); }
 
+/** Merge simple parts into one geometry with vertex colours: one draw call per guest. */
+function mergeParts(parts) {
+  const pos = [], nor = [], col = []; const c = new THREE.Color(); const m = new THREE.Matrix4(), sm = new THREE.Matrix4();
+  for (const p of parts) {
+    const g = p.geo.toNonIndexed(); m.makeTranslation(p.pos[0], p.pos[1], p.pos[2]); if (p.scale) m.multiply(sm.makeScale(p.scale[0], p.scale[1], p.scale[2])); g.applyMatrix4(m);
+    const pa = g.attributes.position.array, na = g.attributes.normal.array; c.set(p.color);
+    for (let i = 0; i < pa.length; i += 3) { pos.push(pa[i], pa[i + 1], pa[i + 2]); nor.push(na[i], na[i + 1], na[i + 2]); col.push(c.r, c.g, c.b); }
+    g.dispose();
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return geo;
+}
+const GUEST_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
+
 let _gId = 1;
 class Guest {
   constructor(pos) {
@@ -17,15 +32,18 @@ class Guest {
     const g = new THREE.Group(); this.group = g;
     const kid = Math.random() < 0.4; this.scale = kid ? 0.75 : 1;
     const shirt = SHIRTS[(Math.random() * SHIRTS.length) | 0], skin = SKIN[(Math.random() * SKIN.length) | 0], pants = PANTS[(Math.random() * PANTS.length) | 0];
-    const legs = new THREE.Mesh(sharedGeo('legs', () => new THREE.BoxGeometry(0.5, 0.7, 0.3)), sharedMat(pants)); legs.position.y = 0.35; g.add(legs);
-    const body = new THREE.Mesh(sharedGeo('body', () => new THREE.CapsuleGeometry(0.3, 0.55, 4, 8)), sharedMat(shirt)); body.position.y = 1.05; body.castShadow = true; g.add(body);
-    const head = new THREE.Mesh(sharedGeo('head', () => new THREE.SphereGeometry(0.28, 10, 8)), sharedMat(skin)); head.position.y = 1.75; g.add(head);
     const hairC = [0x3e2723, 0xffb300, 0x212121, 0xbf360c, 0x795548][(Math.random() * 5) | 0];
-    const hair = new THREE.Mesh(sharedGeo('hair', () => new THREE.SphereGeometry(0.29, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2)), sharedMat(hairC)); hair.position.y = 1.8; g.add(hair);
-    if (Math.random() < 0.3) { const hat = new THREE.Mesh(sharedGeo('hat', () => new THREE.ConeGeometry(0.3, 0.5, 8)), sharedMat(SHIRTS[(Math.random() * SHIRTS.length) | 0])); hat.position.y = 2.2; g.add(hat); }
+    const parts = [
+      { geo: sharedGeo('legs', () => new THREE.BoxGeometry(0.5, 0.7, 0.3)), color: pants, pos: [0, 0.35, 0] },
+      { geo: sharedGeo('body', () => new THREE.CapsuleGeometry(0.3, 0.55, 3, 7)), color: shirt, pos: [0, 1.05, 0] },
+      { geo: sharedGeo('head', () => new THREE.SphereGeometry(0.28, 9, 7)), color: skin, pos: [0, 1.75, 0] },
+      { geo: sharedGeo('hair', () => new THREE.SphereGeometry(0.29, 9, 7, 0, Math.PI * 2, 0, Math.PI / 2)), color: hairC, pos: [0, 1.8, 0] },
+    ];
+    if (Math.random() < 0.3) parts.push({ geo: sharedGeo('hat', () => new THREE.ConeGeometry(0.3, 0.5, 8)), color: SHIRTS[(Math.random() * SHIRTS.length) | 0], pos: [0, 2.2, 0] });
+    const mesh = new THREE.Mesh(mergeParts(parts), GUEST_MAT); mesh.castShadow = true; g.add(mesh);
     g.scale.setScalar(this.scale);
     g.position.copy(pos);
-    this.body = body; this.head = head;
+    this.body = mesh; this.head = mesh;
     this.state = 'wander'; this.target = null; this.timer = 0; this.speed = 2.2 + Math.random() * 1.2;
     this.ride = null; this.building = null; this.seat = null; this.happy = 0; this.life = 150 + Math.random() * 150;
     this.balloon = null; this.bubble = null; this.walkT = Math.random() * 10; this.queueIndex = -1;
@@ -52,10 +70,11 @@ const Guests = {
   list: [], spawnTimer: 2,
   gatePos() { return new THREE.Vector3(0, 0, parkHalf() + 3); },
   randomParkPoint() { const h = parkHalf() - 3; return new THREE.Vector3((Math.random() * 2 - 1) * h, 0, (Math.random() * 2 - 1) * h); },
+  /** Park capacity grows with stars: every star lets 6 more guests in. */
   maxGuests(G) {
     const stars = G.totalStars();
     const shops = G.buildings.filter(b => b.def.earn > 0).length;
-    return Math.min(60, 6 + stars * 3 + shops * 2 + G.rides.filter(r => r.open).length * 4);
+    return Math.min(400, 8 + stars * 6 + shops * 2);
   },
   spawn(G) {
     const g = new Guest(this.gatePos()); g.setTarget(this.randomParkPoint());
@@ -63,7 +82,11 @@ const Guests = {
   },
   update(G, dt, t) {
     this.spawnTimer -= dt;
-    if (this.spawnTimer <= 0) { this.spawnTimer = 1.5 + Math.random() * 2.5; if (this.list.length < this.maxGuests(G)) this.spawn(G); G.stats.guestsVisited = (G.stats.guestsVisited || 0) + (this.list.length < this.maxGuests(G) ? 1 : 0); }
+    if (this.spawnTimer <= 0) {
+      const max = this.maxGuests(G); const room = max - this.list.length;
+      this.spawnTimer = room > max / 2 ? 0.35 + Math.random() * 0.5 : 1.2 + Math.random() * 2.0;
+      if (room > 0) { this.spawn(G); G.stats.guestsVisited = (G.stats.guestsVisited || 0) + 1; }
+    }
     for (let i = this.list.length - 1; i >= 0; i--) {
       const g = this.list[i];
       if (g.bubble) { g.bubbleT -= dt; if (g.bubbleT <= 0) { g.group.remove(g.bubble); g.bubble.material.map.dispose(); g.bubble.material.dispose(); g.bubble = null; } }

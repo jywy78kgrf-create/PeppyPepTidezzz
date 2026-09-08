@@ -110,7 +110,12 @@ function buildBuildingMesh(b) {
     const door = new THREE.Mesh(new THREE.BoxGeometry(1.6, 2.6, 0.12), std(0x120a18)); door.position.set(0, 1.3, 2.83); g.add(door);
     const ghost = new THREE.Mesh(new THREE.SphereGeometry(0.6, 12, 10), std(0xffffff, { emissive: 0x99aaff, emissiveIntensity: 0.5 })); ghost.scale.y = 1.3; ghost.position.set(-2.6, 6.2, 1.2); g.add(ghost);
     const pl = new THREE.PointLight(0x7dff9a, 1.2, 12, 2); pl.position.set(0, 2.5, 3.5); g.add(pl);
-    b.anim = (t) => { ghost.position.y = 6.2 + Math.sin(t * 1.5) * 0.4; ghost.position.x = -2.6 + Math.sin(t * 0.7) * 0.6; pl.intensity = 1.0 + Math.sin(t * 9) * 0.4 + (Math.random() < 0.03 ? 1.5 : 0); };
+    const bats = []; const batMat = new THREE.MeshBasicMaterial({ color: 0x111111, side: THREE.DoubleSide });
+    for (let i = 0; i < 4; i++) { const bt = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.35), batMat); bt.userData.a = i * 1.6; g.add(bt); bats.push(bt); }
+    const fenceMat = std(0x2a2a2a, { metalness: 0.5 });
+    for (let i = -3; i <= 3; i++) { const pk = new THREE.Mesh(new THREE.ConeGeometry(0.07, 1.4, 5), fenceMat); pk.position.set(i * 1.0, 0.7, 3.6); g.add(pk); }
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(6.6, 0.06, 0.06), fenceMat); rail.position.set(0, 0.9, 3.6); g.add(rail);
+    b.anim = (t) => { ghost.position.y = 6.2 + Math.sin(t * 1.5) * 0.4; ghost.position.x = -2.6 + Math.sin(t * 0.7) * 0.6; pl.intensity = 1.0 + Math.sin(t * 9) * 0.4 + (Math.random() < 0.03 ? 1.5 : 0); bats.forEach(bt => { const a = t * 1.3 + bt.userData.a; bt.position.set(Math.cos(a) * 4.5, 8.5 + Math.sin(a * 2) * 0.6, Math.sin(a) * 4.5); bt.rotation.y = -a; bt.scale.y = 0.6 + Math.abs(Math.sin(t * 14 + bt.userData.a)) * 0.6; }); };
     addSign(g, '👻 Spooky House', '#7dff9a', 5, 4.6, 2.9);
   } else if (b.type === 'tree') {
     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.32, 1.6, 8), std(0x795548)); trunk.position.y = 0.8; trunk.castShadow = true; g.add(trunk);

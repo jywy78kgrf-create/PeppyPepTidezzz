@@ -81,6 +81,7 @@ const CHALLENGES = [
   { id: 'twisty', icon: '🌀', title: 'Twisty Turny', desc: 'A ride with 6 turns', reward: 250, check: () => [maxStat(r => r.stats.turns), 6] },
   { id: 'speed', icon: '⚡', title: 'Speed Demon', desc: 'Reach speed 18 on a ride', reward: 300, check: () => [Math.floor(maxStat(r => r.stats.maxV)), 18] },
   { id: 'guests20', icon: '🧑‍🤝‍🧑', title: 'Crowd Pleaser', desc: 'Have 20 guests in the park at once', reward: 300, check: () => [G.stats.maxGuests || 0, 20] },
+  { id: 'guests100', icon: '🎉', title: 'Packed Park', desc: 'Have 100 guests in the park at once', reward: 1500, check: () => [G.stats.maxGuests || 0, 100] },
   { id: 'stars3', icon: '⭐', title: 'Three Star Ride', desc: 'Get a 3-star ride', reward: 300, check: () => [maxStat(r => r.stars), 3] },
   { id: 'shops5', icon: '🏪', title: 'Shopping Street', desc: 'Build 5 shops or games', reward: 400, check: () => [G.buildings.filter(b => b.def.earn > 0).length, 5] },
   { id: 'riders50', icon: '🎟️', title: 'Fifty Riders', desc: '50 guests ride your rides', reward: 400, check: () => [G.stats.ridersServed || 0, 50] },
@@ -119,7 +120,7 @@ function starStr(n) { return '⭐'.repeat(n) + '☆'.repeat(Math.max(0, 5 - n));
 function updateTopbar() {
   $('#stMoney').textContent = '💰 ' + fmtMoney(G.money);
   $('#stStars').textContent = '⭐ ' + G.totalStars();
-  $('#stGuests').textContent = '🧑 ' + Guests.list.length;
+  $('#stGuests').textContent = '🧑 ' + Guests.list.length + '/' + Guests.maxGuests(G);
 }
 
 // ---------- modes ----------
@@ -588,7 +589,7 @@ function showRules() {
     <li>🏁 The track must make a <b>loop</b> back to the Station.</li>
     <li>💦 Water rides: water only flows <b>downhill</b>. Splash Pools must be on the ground.</li>
     <li>🐢 Friction slowly steals speed, so a long flat track will stop. Keep it moving!</li>
-    <li>⭐ More height, bigger drops, more turns and more hills = more <b>stars</b> = more money from guests!</li>
+    <li>⭐ More height, bigger drops, more turns and more hills = more <b>stars</b>. Every star lets <b>6 more guests</b> into the park!</li>
   </ul><div class="mrow"><button class="btn grey" onclick="closeModal()">Got it!</button></div>`);
 }
 function showHelp() {

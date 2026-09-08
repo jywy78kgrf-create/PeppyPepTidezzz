@@ -89,3 +89,6 @@ button { font-family: inherit; font-weight: 700; cursor: pointer; border: 0; }
 
 #flash { position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; transition:opacity .35s; }
 #flash.on { opacity:.85; transition:none; }
+
+#vignette { position:absolute; inset:0; pointer-events:none; opacity:0; background: radial-gradient(ellipse at center, rgba(255,0,0,0) 45%, rgba(180,0,0,.75) 100%); transition:opacity .6s; }
+#vignette.on { opacity:1; transition:opacity .08s; }
