@@ -38,9 +38,15 @@ If the laptop's firewall asks, allow Python to accept incoming connections.
 - **🧪 TEST RIDE**: a car runs the track using real energy rules. If it fails, the game
   says why and marks the spot with a red ring.
 - **🏪 Shops**: candy, ice cream, toys, balloons, ring toss, duck pond, carousel, Ferris
-  wheel, Spooky House (walk through it in Walk mode for jump scares), trees, fountains,
-  flowers. **More Land** grows the park.
-- **🏆 Challenges** pay money rewards. Stars come from ride ratings and attractions.
+  wheel, Spooky House (walk through it in Walk mode for jump scares), Drop Tower, Pirate
+  Ship, Bumper Cars, pizza, popcorn, lemonade, path tiles, lamp posts, flags, statues,
+  fireworks, trees, fountains, flowers. **More Land** grows the park up to 68 cells wide;
+  the city moves outward as the park grows.
+- **🏆 Challenges** (65 of them, including science, ratio, architecture and endless tiers)
+  pay money rewards. Stars come from ride ratings and attractions. Every 10 stars is a park
+  level, which unlocks bigger attractions (Drop Tower, Pirate Ship, Bumper Cars, Fireworks).
+- **🌙 Day and night** cycle automatically (or pick one in the menu). Lamps and city windows
+  glow at night and Fireworks launchers fire more often.
 - Camera: one finger spins, two fingers move and zoom, **🎥 Ride Cam** rides in the front seat.
 
 ## The physics rules

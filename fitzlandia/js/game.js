@@ -6,8 +6,11 @@ const SAVE_KEY = 'fitzlandia_save_v1';
 const LAND_STEP = 6;
 const G = {
   money: 600, totalEarned: 0, rides: [], buildings: [], claimed: [], stats: {},
-  mode: 'view', sel: null, pending: null, shopType: null, selected: null, pieceSel: null, insertMode: false,
+  mode: 'view', sel: null, pending: null, shopType: null, selected: null, pieceSel: null, insertMode: false, dayCycle: true, dayT: 0,
   test: null, time: 0, sound: true, hintShown: {},
+  levelNames: ['Rookie Park', 'Fun Park', 'Cool Park', 'Super Park', 'Mega Park', 'Epic Park', 'Legendary Park', 'Galactic Park', 'Infinity Park', 'FitzLandia Supreme'],
+  level() { return Math.min(this.levelNames.length, Math.floor(this.totalStars() / 10) + 1); },
+  levelName() { return this.levelNames[this.level() - 1]; },
   totalStars() { return this.rides.reduce((a, r) => a + (r.open ? r.stars : 0), 0) + this.buildings.reduce((a, b) => a + (b.def.stars || 0), 0); },
   earn(amount, pos, icon) {
     this.money += amount; this.totalEarned += amount;
@@ -18,7 +21,7 @@ const G = {
 };
 
 // ---------- occupancy ----------
-function buildingHeightLevels(b) { return b.type === 'ferris' ? 7 : b.type === 'spooky' ? 5 : b.type === 'carousel' ? 4 : b.type === 'tree' ? 2 : b.type === 'flowers' || b.type === 'fountain' ? 1 : 3; }
+function buildingHeightLevels(b) { return b.type === 'path' ? -9 : b.type === 'droptower' ? 9 : b.type === 'ferris' ? 7 : b.type === 'spooky' ? 5 : b.type === 'pirate' ? 5 : b.type === 'bumper' ? 3 : b.type === 'carousel' ? 4 : b.type === 'tree' ? 2 : b.type === 'flowers' || b.type === 'fountain' ? 1 : 3; }
 function occupied(cx, cz, lmin, lmax, excludeRide, excludeIdx) {
   for (const r of G.rides) for (let i = 0; i < r.pieces.length; i++) {
     if (r === excludeRide) continue;
@@ -99,6 +102,49 @@ const CHALLENGES = [
   { id: 'mega', icon: '🏰', title: 'Mega Park', desc: 'Have 6 rides open', reward: 2000, check: () => [G.rides.filter(r => r.open).length, 6] },
   { id: 'stars15', icon: '👑', title: 'Superstar Park', desc: 'Collect 15 stars', reward: 3000, check: () => [G.totalStars(), 15] },
   { id: 'stars30', icon: '🏆', title: 'FitzLandia Legend', desc: 'Collect 30 stars', reward: 5000, check: () => [G.totalStars(), 30] },
+  // ---- science & engineering ----
+  { id: 'onelift', icon: '🔋', title: 'Energy Saver', desc: 'A 4-star coaster using only ONE lift piece (no boosters)', reward: 1500, check: () => [G.rides.some(r => r.open && r.type === 'coaster' && r.stars >= 4 && r.pieces.filter(p => PIECES[p.type].lift).length === 1 && !r.pieces.some(p => p.type === 'booster')) ? 1 : 0, 1] },
+  { id: 'gravity', icon: '🍎', title: 'Pure Gravity', desc: 'Reach speed 22 with no boosters', reward: 1200, check: () => [Math.floor(maxStat(r => r.pieces.some(p => p.type === 'booster') ? 0 : r.stats.maxV)), 22] },
+  { id: 'ratio21', icon: '📐', title: 'Two to One', desc: 'A coaster with exactly twice as many drops as lifts', reward: 1000, check: () => [G.rides.some(r => r.open && r.stats && r.stats.lifts > 0 && r.stats.dropsN === r.stats.lifts * 2) ? 1 : 0, 1] },
+  { id: 'halfhalf', icon: '½', title: 'Half and Half', desc: 'A ride whose biggest drop is exactly half its top height', reward: 1000, check: () => [G.rides.some(r => r.open && r.stats && r.stats.maxLevel >= 4 && r.stats.bigDrop * 2 === r.stats.maxLevel) ? 1 : 0, 1] },
+  { id: 'budget', icon: '💸', title: 'Budget Builder', desc: 'A 4-star ride that cost under $500', reward: 1500, check: () => [G.rides.some(r => r.open && r.stars >= 4 && r.cost < 500) ? 1 : 0, 1] },
+  { id: 'longride', icon: '⏱️', title: 'Marathon Ride', desc: 'A ride that lasts 60 seconds', reward: 1500, check: () => [Math.floor(maxStat(r => r.stats.time)), 60] },
+  { id: 'pieces50', icon: '🧩', title: 'Long Haul', desc: 'A single ride with 50+ pieces', reward: 1500, check: () => [maxStat(r => r.pieces.length), 50] },
+  { id: 'maxheight', icon: '🚀', title: 'Top of the World', desc: 'A ride that reaches height 12', reward: 2000, check: () => [maxStat(r => r.stats.maxLevel), 12] },
+  { id: 'speed30', icon: '💨', title: 'Sound Barrier', desc: 'Reach speed 30', reward: 2500, check: () => [Math.floor(maxStat(r => r.stats.maxV)), 30] },
+  { id: 'inv6', icon: '🌀', title: 'Inversion Insanity', desc: '6 loops or corkscrews in one ride', reward: 3000, check: () => [maxStat(r => (r.stats.loops || 0) + (r.stats.corks || 0)), 6] },
+  { id: 'tunnel3', icon: '🚇', title: 'Mole Coaster', desc: 'A ride with 3 tunnels', reward: 800, check: () => [maxStat(r => r.stats.tunnels), 3] },
+  { id: 'photo', icon: '📸', title: 'Say Cheese', desc: 'Sell ride photos with a Photo Cam', reward: 700, check: () => [maxStat(r => r.stats.photos), 1] },
+  { id: 'splash3', icon: '🌊', title: 'Triple Splash', desc: 'A water ride with 3 Splash Pools', reward: 1200, check: () => [maxStat(r => r.type === 'water' ? r.pieces.filter(p => p.type === 'splash').length : 0), 3] },
+  { id: 'fivestar3', icon: '🌟', title: 'Star Studio', desc: 'Three 5-star rides', reward: 4000, check: () => [G.rides.filter(r => r.open && r.stars === 5).length, 3] },
+  // ---- architect & park design ----
+  { id: 'corners', icon: '🧭', title: 'Four Corners', desc: 'Put a tree in all four corners of the park', reward: 800, check: () => { const n = World.parkCells / 2; const c = [[-n, -n], [n - 1, -n], [-n, n - 1], [n - 1, n - 1]]; return [c.filter(([x, z]) => G.buildings.some(b => b.type === 'tree' && b.cx === x && b.cz === z)).length, 4]; } },
+  { id: 'paths20', icon: '🧱', title: 'Pathmaker', desc: 'Lay 20 path tiles', reward: 500, check: () => [G.buildings.filter(b => b.type === 'path').length, 20] },
+  { id: 'paths100', icon: '🏗️', title: 'City Planner', desc: 'Lay 100 path tiles', reward: 2000, check: () => [G.buildings.filter(b => b.type === 'path').length, 100] },
+  { id: 'green', icon: '🌳', title: 'Green Park', desc: '25 trees and flower beds', reward: 1000, check: () => [G.buildings.filter(b => b.type === 'tree' || b.type === 'flowers').length, 25] },
+  { id: 'lamps', icon: '💡', title: 'Light It Up', desc: '10 lamp posts', reward: 600, check: () => [G.buildings.filter(b => b.type === 'lamp').length, 10] },
+  { id: 'balanced', icon: '⚖️', title: 'Balanced Park', desc: 'Same number of shops as open rides (at least 4 each)', reward: 1200, check: () => { const r = G.rides.filter(x => x.open).length, sh = G.buildings.filter(b => b.def.kind === 'shop' || b.def.kind === 'booth').length; return [r >= 4 && r === sh ? 1 : 0, 1]; } },
+  { id: 'allshops', icon: '🛍️', title: 'Grand Bazaar', desc: 'Build every kind of shop and game', reward: 2500, check: () => [SHOP_ORDER.filter(t => (SHOPS[t].kind === 'shop' || SHOPS[t].kind === 'booth') && G.buildings.some(b => b.type === t)).length, SHOP_ORDER.filter(t => SHOPS[t].kind === 'shop' || SHOPS[t].kind === 'booth').length] },
+  { id: 'attractions', icon: '🎪', title: 'Thrill Collection', desc: 'Build the Drop Tower, Pirate Ship and Bumper Cars', reward: 3000, check: () => [['droptower', 'pirate', 'bumper'].filter(t => G.buildings.some(b => b.type === t)).length, 3] },
+  { id: 'fireworks', icon: '🎆', title: 'Night Show', desc: 'Build a Fireworks launcher', reward: 800, check: () => [G.buildings.filter(b => b.type === 'fireworks').length, 1] },
+  { id: 'skyline', icon: '🏙️', title: 'Skyline', desc: '3 rides taller than height 8', reward: 2500, check: () => [G.rides.filter(r => r.open && r.stats && r.stats.maxLevel > 8).length, 3] },
+  { id: 'land2', icon: '🌍', title: 'Big Land', desc: 'Grow the park to 44 cells wide', reward: 3000, check: () => [World.parkCells, 44] },
+  { id: 'land3', icon: '🗺️', title: 'Huge Land', desc: 'Grow the park to 56 cells wide', reward: 6000, check: () => [World.parkCells, 56] },
+  { id: 'landmax', icon: '🌐', title: 'FitzLandia Nation', desc: 'Grow the park to its biggest size (68)', reward: 15000, check: () => [World.parkCells, 68] },
+  // ---- endless tiers ----
+  { id: 'rides10', icon: '🎢', title: 'Ten Rides', desc: 'Have 10 rides open', reward: 5000, check: () => [G.rides.filter(r => r.open).length, 10] },
+  { id: 'rides16', icon: '🎡', title: 'Sixteen Rides', desc: 'Have 16 rides open', reward: 12000, check: () => [G.rides.filter(r => r.open).length, 16] },
+  { id: 'stars50', icon: '✨', title: 'Star Collector I', desc: 'Collect 50 stars', reward: 8000, check: () => [G.totalStars(), 50] },
+  { id: 'stars75', icon: '💫', title: 'Star Collector II', desc: 'Collect 75 stars', reward: 15000, check: () => [G.totalStars(), 75] },
+  { id: 'stars100', icon: '🌠', title: 'Star Collector III', desc: 'Collect 100 stars', reward: 30000, check: () => [G.totalStars(), 100] },
+  { id: 'riders1k', icon: '🎫', title: 'A Thousand Riders', desc: '1,000 guests ride your rides', reward: 5000, check: () => [G.stats.ridersServed || 0, 1000] },
+  { id: 'riders5k', icon: '🎟️', title: 'Five Thousand Riders', desc: '5,000 guests ride your rides', reward: 20000, check: () => [G.stats.ridersServed || 0, 5000] },
+  { id: 'guests200', icon: '🎉', title: 'Festival Crowd', desc: '200 guests in the park at once', reward: 6000, check: () => [G.stats.maxGuests || 0, 200] },
+  { id: 'rich2', icon: '💎', title: 'Millionaire', desc: 'Earn $100,000 in total', reward: 20000, check: () => [Math.floor(G.totalEarned), 100000] },
+  { id: 'rich3', icon: '👑', title: 'Emperor of Fun', desc: 'Earn $500,000 in total', reward: 100000, check: () => [Math.floor(G.totalEarned), 500000] },
+  { id: 'lvl5', icon: '🏰', title: 'Mega Park Status', desc: 'Reach park level 5', reward: 5000, check: () => [G.level(), 5] },
+  { id: 'lvl8', icon: '🪐', title: 'Galactic Park Status', desc: 'Reach park level 8', reward: 25000, check: () => [G.level(), 8] },
+  { id: 'lvl10', icon: '♾️', title: 'FitzLandia Supreme', desc: 'Reach park level 10', reward: 100000, check: () => [G.level(), 10] },
 ];
 function checkChallenges() {
   for (const c of CHALLENGES) {
@@ -119,7 +165,7 @@ function fmtMoney(n) { return '$' + Math.floor(n).toLocaleString(); }
 function starStr(n) { return '⭐'.repeat(n) + '☆'.repeat(Math.max(0, 5 - n)); }
 function updateTopbar() {
   $('#stMoney').textContent = '💰 ' + fmtMoney(G.money);
-  $('#stStars').textContent = '⭐ ' + G.totalStars();
+  $('#stStars').textContent = '⭐ ' + G.totalStars() + ' · Lv ' + G.level();
   $('#stGuests').textContent = '🧑 ' + Guests.list.length + '/' + Guests.maxGuests(G);
 }
 
@@ -171,7 +217,7 @@ function renderContext() {
       </div>`;
   } else if (m === 'shops' || m === 'placeShop') {
     const nextLand = landPrice();
-    html = `<div class="row pieces">${SHOP_ORDER.map(t => { const d = SHOPS[t]; const ok = G.money >= d.cost; return `<button class="piece ${G.shopType === t ? 'on' : ''} ${ok ? '' : 'dim'}" data-action="shop" data-type="${t}"><span class="ic">${d.icon}</span><span class="nm">${d.name}</span><span class="cost">$${d.cost}</span></button>`; }).join('')}
+    html = `<div class="row pieces">${SHOP_ORDER.map(t => { const d = SHOPS[t]; const locked = (d.level || 1) > G.level(); const ok = G.money >= d.cost && !locked; return `<button class="piece ${G.shopType === t ? 'on' : ''} ${ok ? '' : 'dim'}" data-action="shop" data-type="${t}"><span class="ic">${locked ? '🔒' : d.icon}</span><span class="nm">${d.name}</span><span class="cost">${locked ? 'Lv ' + d.level : '$' + d.cost}</span></button>`; }).join('')}
       <button class="piece land ${G.money >= nextLand ? '' : 'dim'}" data-action="land" ${World.parkCells >= MAX_PARK ? 'disabled' : ''}><span class="ic">🌱</span><span class="nm">More Land</span><span class="cost">${World.parkCells >= MAX_PARK ? 'MAX' : '$' + nextLand}</span></button></div>
       <div class="row"><div class="label">${G.shopType ? `Tap the grass to place your ${SHOPS[G.shopType].icon} ${SHOPS[G.shopType].name}` : 'Pick something to build, then tap the grass 🌿'}</div>${G.shopType ? '<button class="btn grey" data-action="cancelShop">✖ Cancel</button>' : ''}</div>`;
   } else if (m === 'walk') {
@@ -387,8 +433,12 @@ function placeStation(cx, cz) {
 function placeShop(cx, cz) {
   const def = SHOPS[G.shopType]; const size = def.size || 1;
   for (let i = 0; i < size; i++) for (let j = 0; j < size; j++) { if (!inPark(cx + i, cz + j)) { toast('Build inside the park fence! 🚧 (buy more land 🌱)'); return; } }
+  if ((def.level || 1) > G.level()) { toast(`🔒 ${def.name} unlocks at park level ${def.level}. Earn more stars!`); return; }
   const b = new Building(G.shopType, cx, cz);
-  for (const [x, z] of b.cells()) if (occupied(x, z, 0, buildingHeightLevels(b), null, -1)) { toast('Something is in the way! Pick an empty spot.'); return; }
+  for (const [x, z] of b.cells()) {
+    if (G.buildings.some(o => o.type === 'path' && o.cx === x && o.cz === z) && def.kind === 'path') { toast('There is already a path tile here.'); return; }
+    if (occupied(x, z, 0, Math.max(0, buildingHeightLevels(b)), null, -1)) { toast('Something is in the way! Pick an empty spot.'); return; }
+  }
   if (!G.spend(def.cost)) { toast('Not enough money! 💰'); return; }
   G.buildings.push(b); b.build(World.scene); Audio_.pop(); Particles.emit(b.center.setY(2), 20, { spread: 5, up: 5, life: 0.8, color: 0xffffff, size: 0.8 });
   renderContext(); save();
@@ -397,7 +447,7 @@ function deleteBuilding(b) {
   Guests.clearBuilding(b); disposeObject(b.group); G.buildings.splice(G.buildings.indexOf(b), 1); G.money += Math.floor(b.def.cost / 2);
   G.selected = null; renderContext(); save();
 }
-function landPrice() { const steps = (World.parkCells - 20) / LAND_STEP; return [500, 1200, 2500, 5000][steps] || 8000; }
+function landPrice() { const steps = (World.parkCells - 20) / LAND_STEP; return [500, 1200, 2500, 5000, 8000, 12000, 18000, 25000][steps] || 30000; }
 function buyLand() {
   if (World.parkCells >= MAX_PARK) return;
   const price = landPrice(); if (!G.spend(price)) { toast(`More land costs $${price}. Keep earning! 💰`); return; }
@@ -501,10 +551,12 @@ function passTest() {
   const s = r.station; const c = cellCenter(s.cx, s.cz);
   if (rating.stars >= 4) Particles.fireworks(c.clone().setY(6)); else Particles.confetti(c.clone().setY(5));
   Audio_.fanfare();
+  const hTop = rating.maxLevel * RISE, vTheory = Math.sqrt(2 * PHYS.g * hTop);
+  const science = `<p class="tip">🔬 <b>Science:</b> your highest point is ${rating.maxLevel} blocks (${hTop} m). Gravity alone can give at most √(2·g·h) = √(2 × 9.8 × ${hTop}) ≈ <b>${vTheory.toFixed(0)}</b> speed. You hit <b>${Math.floor(t.stats.maxV)}</b>${t.stats.maxV > vTheory + 0.5 ? ' (boosters add energy!)' : ' (friction stole the rest)'}.<br>📐 <b>Ratios:</b> ${rating.lifts} lift${rating.lifts === 1 ? '' : 's'} : ${rating.dropsN} drop${rating.dropsN === 1 ? '' : 's'} · ${rating.pieces} pieces for $${rating.cost} = <b>$${(rating.cost / rating.pieces).toFixed(1)}</b> per piece · stars per $100 = <b>${(rating.stars / rating.cost * 100).toFixed(2)}</b></p>`;
   const tips = rating.stars < 5 ? `<p class="tip">💡 Want more stars? ${r.water ? 'Bigger drops into the Splash Pool, more turns' : 'Taller lift hills, bigger drops, more hills and turns'} make it more exciting!</p>` : '<p class="tip">🌟 A PERFECT ride! Guests will love it!</p>';
   showModal(`<h2>🎉 IT WORKS! ${r.name} is OPEN!</h2><div class="stars">${starStr(rating.stars)}</div>
     <div class="statgrid"><div>⚡ Top speed<b>${Math.floor(t.stats.maxV)}</b></div><div>🏔️ Highest<b>${rating.maxLevel}</b></div><div>⬇️ Biggest drop<b>${rating.bigDrop}</b></div><div>🌀 Turns<b>${t.stats.turns}</b></div><div>🙃 Upside-down<b>${t.stats.inversions}</b></div><div>⏱️ Ride time<b>${Math.floor(t.stats.time)}s</b></div><div>🎟️ Ticket<b>$${ticketPrice(r)}</b></div></div>
-    ${tips}<div class="mrow"><button class="btn green big" id="mOpen">🎟️ Let guests ride!</button><button class="btn blue" id="mName2">✏️ Name it</button></div>`, { dismiss: false });
+    ${tips}${science}<div class="mrow"><button class="btn green big" id="mOpen">🎟️ Let guests ride!</button><button class="btn blue" id="mName2">✏️ Name it</button></div>`, { dismiss: false });
   $('#mOpen').onclick = () => { closeModal(); setMode('view'); G.selected = { kind: 'ride', ride: r }; renderContext(); save(); checkChallenges(); };
   $('#mName2').onclick = () => { closeModal(); setMode('view'); G.selected = { kind: 'ride', ride: r }; renderContext(); save(); renameRide(r); checkChallenges(); };
 }
@@ -521,7 +573,7 @@ function runOpenRides(dt) {
       onSplash: (f, sp) => { Particles.splash(f.p.clone()); Audio_.splash(); },
       onStation: (veh) => {
         const n = Guests.unload(G, r, veh);
-        if (n) { const s = r.station; const c = cellCenter(s.cx, s.cz).setY(5); const amt = n * ticketPrice(r); r.earned += amt; G.earn(amt, c, '🎟️'); }
+        if (n) { const s = r.station; const c = cellCenter(s.cx, s.cz).setY(5); const photos = (r.stats && r.stats.photos) || 0; const amt = n * ticketPrice(r) + n * photos * 2; r.earned += amt; G.earn(amt, c, photos ? '📸' : '🎟️'); }
         veh.boarded = false;
         Walk.onRideArrived(r);
       }
@@ -560,21 +612,27 @@ function computeHint() {
 
 // ---------- modals ----------
 function showChallenges() {
-  const rows = CHALLENGES.map(c => { const [cur, max] = c.check(); const done = G.claimed.includes(c.id); const pct = Math.min(100, Math.round(cur / max * 100));
+  const list = CHALLENGES.slice().sort((a, b) => (G.claimed.includes(a.id) ? 1 : 0) - (G.claimed.includes(b.id) ? 1 : 0));
+  const rows = list.map(c => { const [cur, max] = c.check(); const done = G.claimed.includes(c.id); const pct = Math.min(100, Math.round(cur / max * 100));
     return `<div class="ch ${done ? 'done' : ''}"><div class="chi">${c.icon}</div><div class="cht"><b>${c.title}</b><span>${c.desc}</span><div class="bar"><i style="width:${done ? 100 : pct}%"></i></div></div><div class="chr">${done ? '✅' : `$${c.reward}<small>${Math.min(cur, max)}/${max}</small>`}</div></div>`; }).join('');
-  showModal(`<h2>🏆 Challenges</h2><div class="chlist">${rows}</div><div class="mrow"><button class="btn grey" onclick="closeModal()">Close</button></div>`);
+  showModal(`<h2>🏆 Challenges — ${G.claimed.length}/${CHALLENGES.length} done</h2><div class="chlist">${rows}</div><div class="mrow"><button class="btn grey" onclick="closeModal()">Close</button></div>`);
 }
 function showMenu() {
   showModal(`<h2>🎡 FitzLandia</h2>
     <div class="menugrid">
       <button class="btn blue" id="mSound">${Audio_.enabled ? '🔊 Sound ON' : '🔇 Sound OFF'}</button>
+      <button class="btn blue" id="mNight">${World.nightTarget ? '☀️ Make it Day' : '🌙 Make it Night'}</button>
+      <button class="btn blue" id="mCycle">🔁 Auto day/night: ${G.dayCycle ? 'ON' : 'OFF'}</button>
       <button class="btn blue" id="mRules">📜 Ride Rules</button>
       <button class="btn blue" id="mHelp">❓ How to play</button>
       <button class="btn red" id="mReset">🧨 New Park</button>
     </div>
+    <p class="small">🏰 Level ${G.level()} — ${G.levelName()} · next level at ${G.level() * 10} ⭐</p>
     <p class="small">Stats: ${G.stats.ridersServed || 0} riders · ${G.stats.shopSales || 0} sales · $${Math.floor(G.totalEarned)} earned all-time</p>
     <div class="mrow"><button class="btn grey" onclick="closeModal()">Close</button></div>`);
   $('#mSound').onclick = () => { Audio_.enabled = !Audio_.enabled; save(); showMenu(); };
+  $('#mNight').onclick = () => { const toNight = !World.nightTarget; setNight(toNight); G.dayCycle = false; G.dayT = toNight ? 220 : 0; save(); showMenu(); };
+  $('#mCycle').onclick = () => { G.dayCycle = !G.dayCycle; save(); showMenu(); };
   $('#mRules').onclick = showRules;
   $('#mHelp').onclick = showHelp;
   $('#mReset').onclick = () => { showModal(`<h2>🧨 Start a brand new park?</h2><p>Your whole park will be deleted!</p><div class="mrow"><button class="btn red" id="mYes">Yes, start over</button><button class="btn grey" id="mNo">No!</button></div>`); $('#mYes').onclick = () => { localStorage.removeItem(SAVE_KEY); location.reload(); }; $('#mNo').onclick = closeModal; };
@@ -608,7 +666,7 @@ function showHelp() {
 // ---------- save / load ----------
 function save() {
   try {
-    const data = { v: 1, money: G.money, totalEarned: G.totalEarned, parkCells: World.parkCells, claimed: G.claimed, stats: G.stats, sound: Audio_.enabled,
+    const data = { v: 1, money: G.money, totalEarned: G.totalEarned, parkCells: World.parkCells, claimed: G.claimed, stats: G.stats, sound: Audio_.enabled, dayCycle: G.dayCycle, dayT: G.dayT,
       rides: G.rides.map(r => r.toJSON()), buildings: G.buildings.map(b => b.toJSON()) };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch (e) { /* storage may be unavailable */ }
@@ -617,7 +675,7 @@ function load() {
   let data = null;
   try { data = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) { }
   if (!data) return false;
-  G.money = data.money; G.totalEarned = data.totalEarned || 0; G.claimed = data.claimed || []; G.stats = data.stats || {}; Audio_.enabled = data.sound !== false;
+  G.money = data.money; G.totalEarned = data.totalEarned || 0; G.claimed = data.claimed || []; G.stats = data.stats || {}; Audio_.enabled = data.sound !== false; G.dayCycle = data.dayCycle !== false; G.dayT = data.dayT || 0;
   if (data.parkCells && data.parkCells !== World.parkCells) { World.parkCells = data.parkCells; rebuildPark(); }
   for (const j of data.rides || []) { const r = Ride.fromJSON(j); G.rides.push(r); r.buildMesh(World.scene); if (r.open && r.stats && !r.stats.maxLevel) r.stats = Object.assign(r.stats, rateRide(r, r.stats)); }
   for (const j of data.buildings || []) { const b = new Building(j.type, j.cx, j.cz); b.earned = j.earned || 0; b.visitors = j.visitors || 0; G.buildings.push(b); b.build(World.scene); }
@@ -638,7 +696,9 @@ function main() {
     requestAnimationFrame(frame);
     const dt = Math.min(0.1, (now - last) / 1000); last = now; G.time += dt;
     animateWorld(dt, G.time);
-    for (const b of G.buildings) if (b.anim) b.anim(G.time);
+    for (const b of G.buildings) { if (b.anim) b.anim(G.time); if (b.type === 'fireworks') { b.timer -= dt; if (b.timer <= 0) { b.timer = World.night > 0.5 ? 5 + Math.random() * 4 : 12 + Math.random() * 8; Particles.fireworks(b.center.setY(22)); } } }
+    if (G.dayCycle) { G.dayT += dt; const period = 300; const ph = G.dayT % period; setNight(ph > 210); }
+    if (G.level() !== (G.stats.level || 1)) { const up = G.level() > (G.stats.level || 1); G.stats.level = G.level(); if (up) { toast(`🏰 LEVEL UP! Your park is now level ${G.level()}: ${G.levelName()}!`, 4500, 'gold'); Audio_.fanfare(); Particles.fireworks(World.cam.target.clone().setY(10)); renderContext(); } }
     Guests.update(G, dt, G.time);
     G.stats.maxGuests = Math.max(G.stats.maxGuests || 0, Guests.list.length);
     runOpenRides(dt);

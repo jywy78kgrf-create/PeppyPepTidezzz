@@ -12,11 +12,22 @@ const SHOPS = {
   carousel: { name: 'Carousel',      icon: '🎠', cost: 400, earn: 6, color: 0xffd93d, kind: 'attraction', size: 2, stars: 1, gift: '❤️' },
   ferris:   { name: 'Ferris Wheel',  icon: '🎡', cost: 800, earn: 8, color: 0xff3d6e, kind: 'attraction', size: 2, stars: 2, gift: '❤️' },
   spooky:   { name: 'Spooky House',  icon: '👻', cost: 500, earn: 7, color: 0x3b2450, kind: 'attraction', size: 2, stars: 2, gift: '😱', walkin: true },
+  droptower:{ name: 'Drop Tower',    icon: '🗼', cost: 1500, earn: 10, color: 0xff3d6e, kind: 'attraction', size: 1, stars: 3, gift: '😱', level: 3 },
+  pirate:   { name: 'Pirate Ship',   icon: '🏴‍☠️', cost: 1200, earn: 9, color: 0x8d5a2b, kind: 'attraction', size: 2, stars: 2, gift: '🤩', level: 4 },
+  bumper:   { name: 'Bumper Cars',   icon: '🚗', cost: 900, earn: 6, color: 0x1e90ff, kind: 'attraction', size: 2, stars: 2, gift: '😆', level: 5 },
+  pizza:    { name: 'Pizza Place',   icon: '🍕', cost: 180, earn: 7, color: 0xff7043, roof: '#ffffff', roof2: '#e53935', kind: 'shop', size: 1, gift: '🍕' },
+  popcorn:  { name: 'Popcorn Cart',  icon: '🍿', cost: 90,  earn: 4, color: 0xffca28, roof: '#e53935', roof2: '#ffffff', kind: 'booth', size: 1, gift: '🍿' },
+  lemonade: { name: 'Lemonade',      icon: '🍋', cost: 90,  earn: 4, color: 0xfff176, roof: '#ffee58', roof2: '#ffffff', kind: 'booth', size: 1, gift: '🍋' },
+  fireworks:{ name: 'Fireworks',     icon: '🎆', cost: 600, earn: 0, kind: 'deco', size: 1, level: 6 },
+  path:     { name: 'Path Tile',     icon: '🧱', cost: 5,   earn: 0, kind: 'path', size: 1 },
+  lamp:     { name: 'Lamp Post',     icon: '💡', cost: 30,  earn: 0, kind: 'deco', size: 1 },
+  statue:   { name: 'Statue',        icon: '🗽', cost: 250, earn: 0, kind: 'deco', size: 1, stars: 1, level: 4 },
+  flag:     { name: 'Flag',          icon: '🚩', cost: 20,  earn: 0, kind: 'deco', size: 1 },
   tree:     { name: 'Tree',          icon: '🌳', cost: 20,  earn: 0, kind: 'deco', size: 1 },
   fountain: { name: 'Fountain',      icon: '⛲', cost: 80,  earn: 0, kind: 'deco', size: 1 },
   flowers:  { name: 'Flowers',       icon: '🌷', cost: 15,  earn: 0, kind: 'deco', size: 1 },
 };
-const SHOP_ORDER = ['candy', 'icecream', 'toy', 'balloon', 'ringtoss', 'duckpond', 'carousel', 'ferris', 'spooky', 'tree', 'flowers', 'fountain'];
+const SHOP_ORDER = ['candy', 'icecream', 'pizza', 'toy', 'popcorn', 'lemonade', 'balloon', 'ringtoss', 'duckpond', 'carousel', 'ferris', 'spooky', 'droptower', 'pirate', 'bumper', 'path', 'tree', 'flowers', 'fountain', 'lamp', 'flag', 'statue', 'fireworks'];
 
 let _bId = 1;
 class Building {
@@ -117,6 +128,67 @@ function buildBuildingMesh(b) {
     const rail = new THREE.Mesh(new THREE.BoxGeometry(6.6, 0.06, 0.06), fenceMat); rail.position.set(0, 0.9, 3.6); g.add(rail);
     b.anim = (t) => { ghost.position.y = 6.2 + Math.sin(t * 1.5) * 0.4; ghost.position.x = -2.6 + Math.sin(t * 0.7) * 0.6; pl.intensity = 1.0 + Math.sin(t * 9) * 0.4 + (Math.random() < 0.03 ? 1.5 : 0); bats.forEach(bt => { const a = t * 1.3 + bt.userData.a; bt.position.set(Math.cos(a) * 4.5, 8.5 + Math.sin(a * 2) * 0.6, Math.sin(a) * 4.5); bt.rotation.y = -a; bt.scale.y = 0.6 + Math.abs(Math.sin(t * 14 + bt.userData.a)) * 0.6; }); };
     addSign(g, '👻 Spooky House', '#7dff9a', 5, 4.6, 2.9);
+  } else if (b.type === 'droptower') {
+    const H = 16; const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.6, H, 10), std(0xb0bec5, { metalness: 0.5, roughness: 0.4 })); pole.position.y = H / 2; pole.castShadow = true; g.add(pole);
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 2.0, 0.5, 16), std(0x90a4ae)); base.position.y = 0.25; g.add(base);
+    const top = new THREE.Mesh(new THREE.ConeGeometry(0.9, 1.6, 8), std(d.color)); top.position.y = H + 0.7; g.add(top);
+    const gond = new THREE.Group(); const ring = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.25, 8, 20), std(d.color)); ring.rotation.x = Math.PI / 2; gond.add(ring);
+    for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2; const seat = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.7, 0.6), std(0x263238)); seat.position.set(Math.cos(a) * 1.3, 0.35, Math.sin(a) * 1.3); seat.rotation.y = -a; gond.add(seat); }
+    gond.position.y = 1; g.add(gond); b.seats = [gond];
+    b.anim = (t) => { const T = t % 16; let y; if (T < 8) y = 1 + (T / 8) * (H - 3); else if (T < 10.5) y = H - 2 + Math.sin(T * 6) * 0.05; else if (T < 11.1) { const u = (T - 10.5) / 0.6; y = (H - 2) - u * u * (H - 3); } else if (T < 12) y = 1 + Math.abs(Math.sin((T - 11.1) * 8)) * 0.6 * (1 - (T - 11.1)); else y = 1; gond.position.y = y; gond.rotation.y = t * 0.3; };
+    addSign(g, '🗼 Drop Tower', hex(d.color), 3.2, 3.2, 2.0);
+  } else if (b.type === 'pirate') {
+    const frame = std(0x546e7a, { metalness: 0.4 });
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) { const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 7.4, 8), frame); leg.position.set(sx * 1.6, 3.6, sz * 1.2); leg.rotation.z = -sx * 0.32; leg.rotation.x = sz * 0.2; leg.castShadow = true; g.add(leg); }
+    const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 3.4, 8), frame); axle.rotation.x = Math.PI / 2; axle.position.y = 7.0; g.add(axle);
+    const pivot = new THREE.Group(); pivot.position.y = 7.0; g.add(pivot);
+    for (const sz of [-1.1, 1.1]) { const arm = new THREE.Mesh(new THREE.BoxGeometry(0.25, 5.6, 0.25), frame); arm.position.set(0, -2.8, sz); pivot.add(arm); }
+    const boat = new THREE.Group(); boat.position.y = -5.6;
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(5.6, 1.2, 2.0), std(d.color)); hull.castShadow = true; boat.add(hull);
+    for (const e of [-1, 1]) { const bow = new THREE.Mesh(new THREE.ConeGeometry(1.0, 1.8, 4), std(d.color)); bow.rotation.z = e * Math.PI / 2; bow.rotation.y = Math.PI / 4; bow.position.set(e * 3.6, 0.4, 0); boat.add(bow); }
+    for (let i = 0; i < 4; i++) { const row = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.5, 1.6), std(0x263238)); row.position.set(-1.9 + i * 1.25, 0.85, 0); boat.add(row); }
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 2.4, 6), std(0x5d4037)); mast.position.set(0, 1.6, 0); boat.add(mast);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.6), new THREE.MeshBasicMaterial({ map: textTexture('☠️', { bg: '#111', color: '#fff', size: 48, w: 128, h: 80 }), side: THREE.DoubleSide })); flag.position.set(0.5, 2.5, 0); boat.add(flag);
+    pivot.add(boat); b.seats = [boat];
+    b.anim = (t) => { pivot.rotation.z = Math.sin(t * 1.1) * 1.15; };
+    addSign(g, '🏴‍☠️ Pirate Ship', hex(d.color), 5, 1.0, 3.2);
+  } else if (b.type === 'bumper') {
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(7.4, 0.3, 7.4), std(0x37474f, { roughness: 0.4, metalness: 0.2 })); floor.position.y = 0.15; floor.receiveShadow = true; g.add(floor);
+    const rim = new THREE.Mesh(new THREE.BoxGeometry(7.8, 0.6, 7.8), std(0xffca28)); rim.position.y = 0.3; g.add(rim); const inner = new THREE.Mesh(new THREE.BoxGeometry(7.0, 0.7, 7.0), std(0x37474f)); inner.position.y = 0.35; g.add(inner);
+    for (const [x, z] of [[-3.7, -3.7], [3.7, -3.7], [-3.7, 3.7], [3.7, 3.7]]) { const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 5, 6), std(0xffca28)); post.position.set(x, 2.5, z); g.add(post); }
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(8.2, 0.25, 8.2), std(0xffffff, { map: stripeTexture('#1e90ff', '#ffffff') })); roof.position.y = 5.1; roof.castShadow = true; g.add(roof);
+    const cars = []; const cc = [0xff3d6e, 0x2ecc71, 0xffd11a, 0x9b59b6, 0xff8c1a];
+    for (let i = 0; i < 5; i++) { const car = new THREE.Group(); const body = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.65, 0.5, 12), std(cc[i])); body.position.y = 0.6; car.add(body); const bumperRing = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.12, 6, 14), std(0x222)); bumperRing.rotation.x = Math.PI / 2; bumperRing.position.y = 0.45; car.add(bumperRing); const seat = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.4), std(0x263238)); seat.position.set(0, 0.95, -0.15); car.add(seat); const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 4.2, 4), std(0x999)); pole.position.set(0, 2.9, -0.4); pole.rotation.x = 0.15; car.add(pole); car.userData = { ph: i * 1.3, r: 1.2 + i * 0.4, sp: 0.5 + i * 0.13 }; g.add(car); cars.push(car); }
+    b.seats = cars;
+    b.anim = (t) => { for (const c of cars) { const u = c.userData; const a = t * u.sp + u.ph; const r = u.r + Math.sin(t * 0.7 + u.ph) * 0.8; const x = Math.cos(a) * r, z = Math.sin(a * 1.3) * r; const nx = Math.cos(a + 0.05) * r, nz = Math.sin((a + 0.05) * 1.3) * r; c.position.set(x, 0.3, z); c.rotation.y = Math.atan2(nx - x, nz - z); } };
+    addSign(g, '🚗 Bumper Cars', '#1e90ff', 5, 5.6, 4.0);
+  } else if (b.type === 'fireworks') {
+    const base = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.5, 2.4), std(0x5d4037)); base.position.y = 0.25; g.add(base);
+    for (const [x, z] of [[-0.6, -0.6], [0.6, -0.6], [-0.6, 0.6], [0.6, 0.6], [0, 0]]) { const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 1.2, 8), std([0xff3d6e, 0xffd11a, 0x2ecc71, 0x1e90ff, 0x9b59b6][((x + z) * 3 + 5) | 0 % 5])); tube.position.set(x, 1.0, z); g.add(tube); }
+    const fence = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.5, 3.2), std(0xffd11a, { wireframe: true })); fence.position.y = 0.5; g.add(fence);
+    b.timer = 4 + Math.random() * 4;
+    b.anim = (t) => { /* launches handled in game loop via b.timer */ };
+    addSign(g, '🎆 Fireworks', '#ff3d6e', 3, 2.2, 1.7);
+  } else if (b.type === 'path') {
+    const tile = new THREE.Mesh(new THREE.PlaneGeometry(CELL, CELL), new THREE.MeshStandardMaterial({ map: pavementTexture(), roughness: 1 })); tile.rotation.x = -Math.PI / 2; tile.position.y = 0.015; tile.receiveShadow = true; g.add(tile);
+  } else if (b.type === 'lamp') {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 3.6, 6), std(0x37474f)); pole.position.y = 1.8; pole.castShadow = true; g.add(pole);
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 0.08), std(0x37474f)); arm.position.set(0.4, 3.5, 0); g.add(arm);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), World.lampMat || std(0xfff1b0)); bulb.position.set(0.8, 3.3, 0); g.add(bulb);
+    const bench = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.12, 0.5), std(0x8d6e63)); bench.position.set(-0.9, 0.5, 0.6); g.add(bench); for (const x of [-1.5, -0.3]) { const bl = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 0.4), std(0x5d4037)); bl.position.set(x, 0.25, 0.6); g.add(bl); }
+  } else if (b.type === 'statue') {
+    const ped = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.4, 1.6), std(0xcfd8dc)); ped.position.y = 0.7; ped.castShadow = true; g.add(ped);
+    const gold = std(0xffd54f, { metalness: 0.8, roughness: 0.25 });
+    const figure = new THREE.Group(); const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.4, 0.9, 4, 8), gold); body.position.y = 1.0; figure.add(body); const head = new THREE.Mesh(new THREE.SphereGeometry(0.35, 10, 8), gold); head.position.y = 1.95; figure.add(head);
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1.2, 6), gold); arm.position.set(0.45, 1.7, 0); arm.rotation.z = -0.5; figure.add(arm); const torch = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.5, 8), std(0xff8c1a, { emissive: 0xff5a00, emissiveIntensity: 0.6 })); torch.position.set(0.78, 2.45, 0); figure.add(torch);
+    figure.position.y = 1.4; figure.scale.setScalar(1.1); g.add(figure);
+    addSign(g, '🗽 Park Founder', '#ffd54f', 2.6, 0.9, 0.9);
+  } else if (b.type === 'flag') {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 4.5, 6), std(0xeceff1)); pole.position.y = 2.25; g.add(pole);
+    const col = [0xff3d6e, 0x1e90ff, 0x2ecc71, 0xffd11a, 0x9b59b6][(Math.random() * 5) | 0];
+    const fl = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 1.0, 8, 1), std(col, { side: THREE.DoubleSide })); fl.position.set(0.8, 3.9, 0); g.add(fl);
+    const pa = fl.geometry.attributes.position; const base = pa.array.slice();
+    b.anim = (t) => { for (let i = 0; i < pa.count; i++) { const x = base[i * 3]; pa.array[i * 3 + 2] = Math.sin(t * 6 + x * 3) * 0.12 * (x + 0.8); } pa.needsUpdate = true; };
   } else if (b.type === 'tree') {
     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.32, 1.6, 8), std(0x795548)); trunk.position.y = 0.8; trunk.castShadow = true; g.add(trunk);
     const greens = [0x2e9e4f, 0x3cb55e, 0x27893f];

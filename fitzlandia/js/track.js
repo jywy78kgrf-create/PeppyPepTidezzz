@@ -11,6 +11,9 @@ const PIECES = {
   left:     { name: 'Turn Left',  icon: '↩️', cost: 15, dl: 0,  turn: -1 },
   right:    { name: 'Turn Right', icon: '↪️', cost: 15, dl: 0,  turn: 1 },
   lift:     { name: 'Chain Lift', icon: '⛓️', cost: 30, dl: 1,  turn: 0, lift: true },
+  biglift:  { name: 'Big Lift',   icon: '🏗️', cost: 55, dl: 2,  turn: 0, lift: true },
+  tunnel:   { name: 'Tunnel',     icon: '🚇', cost: 40, dl: 0,  turn: 0, tunnel: true },
+  photo:    { name: 'Photo Cam',  icon: '📸', cost: 60, dl: 0,  turn: 0, photo: true },
   bankleft: { name: '↩️ Bank Left',  icon: '🏎️', cost: 25, dl: 0, turn: -1, bank: true, turnMax: 24 },
   bankright:{ name: '↪️ Bank Right', icon: '🏎️', cost: 25, dl: 0, turn: 1,  bank: true, turnMax: 24 },
   brake:    { name: 'Brakes',     icon: '🛑', cost: 25, dl: 0,  turn: 0, brake: 6 },
@@ -21,9 +24,9 @@ const PIECES = {
   conveyor: { name: 'Conveyor',   icon: '🔼', cost: 30, dl: 1,  turn: 0, lift: true, water: true },
   splash:   { name: 'Splash Pool',icon: '💦', cost: 40, dl: 0,  turn: 0, splash: true, water: true },
 };
-const COASTER_PIECES = ['lift', 'straight', 'up', 'down', 'bigdrop', 'left', 'right', 'bankleft', 'bankright', 'brake', 'booster', 'bump', 'loop', 'corkscrew'];
+const COASTER_PIECES = ['lift', 'biglift', 'straight', 'up', 'down', 'bigdrop', 'left', 'right', 'bankleft', 'bankright', 'brake', 'booster', 'bump', 'loop', 'corkscrew', 'tunnel', 'photo'];
 const LOOP_R = 2.6, LOOP_A = 2.0, CORK_R = 1.5, BANK_ANGLE = 0.62, BUMP_H = 1.0;
-const WATER_PIECES = ['conveyor', 'straight', 'up', 'down', 'bigdrop', 'left', 'right', 'bankleft', 'bankright', 'brake', 'booster', 'splash'];
+const WATER_PIECES = ['conveyor', 'straight', 'up', 'down', 'bigdrop', 'left', 'right', 'bankleft', 'bankright', 'brake', 'booster', 'splash', 'tunnel', 'photo'];
 
 // Physics rules (the "laws of FitzLandia")
 const PHYS = {
@@ -303,6 +306,21 @@ class Ride {
       const pool = new THREE.Mesh(new THREE.CircleGeometry(2.4, 24), waterMaterial()); pool.rotation.x = -Math.PI / 2; pool.position.set(C.x, 0.47, C.z); pool.renderOrder = 2; this.group.add(pool);
       const rimm = new THREE.Mesh(new THREE.TorusGeometry(2.4, 0.2, 8, 24), new THREE.MeshStandardMaterial({ color: 0xffffff })); rimm.rotation.x = Math.PI / 2; rimm.position.set(C.x, 0.5, C.z); this.group.add(rimm);
     }
+    // tunnels + photo cameras
+    for (let i = 0; i < this.pieces.length; i++) {
+      const p = this.pieces[i]; const def = PIECES[p.type]; if (!def.tunnel && !def.photo) continue;
+      const C = cellCenter(p.cx, p.cz); const d = DIRS[p.h]; const y = (p.l0 + p.l1) / 2 * RISE + 0.4;
+      if (def.tunnel) {
+        const tube = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.7, CELL, 14, 1, true), new THREE.MeshStandardMaterial({ color: 0x5d6d7e, roughness: 0.9, side: THREE.DoubleSide }));
+        tube.rotation.z = Math.PI / 2; tube.rotation.y = p.h % 2 ? Math.PI / 2 : 0; tube.position.set(C.x, y + 0.6, C.z); tube.castShadow = true; this.group.add(tube);
+        for (const e of [-1, 1]) { const ring = new THREE.Mesh(new THREE.TorusGeometry(1.75, 0.15, 8, 20), new THREE.MeshStandardMaterial({ color: this.color })); ring.position.set(C.x + d.x * e * CELL / 2, y + 0.6, C.z + d.z * e * CELL / 2); ring.rotation.y = p.h % 2 ? 0 : Math.PI / 2; this.group.add(ring); }
+      } else {
+        const sx = -d.z, sz = d.x; const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 3.2, 6), new THREE.MeshStandardMaterial({ color: 0x37474f })); post.position.set(C.x + sx * 1.6, y + 1.6, C.z + sz * 1.6); this.group.add(post);
+        const cam = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.4, 0.5), new THREE.MeshStandardMaterial({ color: 0x212121 })); cam.position.set(C.x + sx * 1.6, y + 3.2, C.z + sz * 1.6); cam.lookAt(C.x, y + 1.5, C.z); this.group.add(cam);
+        const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.2, 10), new THREE.MeshStandardMaterial({ color: 0x90caf9, roughness: 0.1 })); lens.position.copy(cam.position); lens.lookAt(C.x, y + 1.5, C.z); lens.rotateX(Math.PI / 2); lens.translateY(-0.3); this.group.add(lens);
+        const flash = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff })); flash.position.set(C.x + sx * 1.6, y + 3.55, C.z + sz * 1.6); flash.name = 'photoFlash' + i; this.group.add(flash);
+      }
+    }
     // invisible pick boxes so a piece can be tapped while building
     const picks = new THREE.Group(); picks.name = 'picks';
     const pickMat = new THREE.MeshBasicMaterial({ visible: false });
@@ -498,10 +516,12 @@ function rateRide(ride, st) {
   for (const p of P) { const dl = PIECES[p.type].dl; if (dl < 0) { run += -dl; best = Math.max(best, run); } else if (dl > 0) run = 0; }
   const loops = P.filter(p => p.type === 'loop').length, corks = P.filter(p => p.type === 'corkscrew').length;
   const boosts = P.filter(p => p.type === 'booster').length, bumps = P.filter(p => p.type === 'bump').length;
-  let ex = best * 1.6 + st.turns * 0.5 + st.drops * 0.9 + Math.min(st.maxV, 26) * 0.3 + P.length * 0.12 + st.airtime * 1.0 + loops * 4.5 + corks * 3.5 + Math.min(boosts, 3) * 1.2 + Math.min(bumps, 4) * 0.6;
+  const tunnels = P.filter(p => p.type === 'tunnel').length, photos = P.filter(p => p.type === 'photo').length;
+  let ex = best * 1.6 + st.turns * 0.5 + st.drops * 0.9 + Math.min(st.maxV, 26) * 0.3 + P.length * 0.12 + st.airtime * 1.0 + loops * 4.5 + corks * 3.5 + Math.min(boosts, 3) * 1.2 + Math.min(bumps, 4) * 0.6 + Math.min(tunnels, 3) * 1.0 + Math.min(photos, 2) * 0.5;
   if (ride.water) ex += st.splashed ? 3 + Math.min(st.splashSpeed || 0, 15) * 0.25 : 0;
   const stars = ex >= 29 ? 5 : ex >= 21 ? 4 : ex >= 14 ? 3 : ex >= 8 ? 2 : 1;
-  return { stars, excitement: Math.round(ex * 10) / 10, maxLevel, bigDrop: best, loops, corks };
+  const lifts = P.filter(p => PIECES[p.type].lift).length, dropsN = P.filter(p => PIECES[p.type].dl < 0).length;
+  return { stars, excitement: Math.round(ex * 10) / 10, maxLevel, bigDrop: best, loops, corks, photos, tunnels, lifts, dropsN, pieces: P.length, cost: ride.cost };
 }
 
 /** BFS auto-connect: find pieces (flat/turn/down) from cursor back to the station entry. */

@@ -5,7 +5,7 @@
 const CELL = 4;        // world units per grid cell
 const RISE = 2;        // world units per track level
 const MAX_LEVEL = 12;  // highest track level
-const MAX_PARK = 44;   // largest park (cells per side)
+const MAX_PARK = 68;   // largest park (cells per side)
 const UP = new THREE.Vector3(0, 1, 0);
 const DIRS = [ {x:1,z:0}, {x:0,z:1}, {x:-1,z:0}, {x:0,z:-1} ]; // heading 0..3 = E,S,W,N
 
@@ -13,7 +13,8 @@ const World = {
   scene: null, camera: null, renderer: null,
   parkCells: 20,
   parkGroup: null, grid: null, fence: null, gate: null, grass: null,
-  city: null, clouds: [], cars: [], balloons: [], animated: [],
+  city: null, road: null, clouds: [], cars: [], balloons: [], animated: [], stars: null, moon: null,
+  night: 0, nightTarget: 0, sunSprite: null, skyMat: null, hemi: null,
   cam: { target: new THREE.Vector3(0, 0, 0), az: 0.7, pol: 0.95, dist: 60 },
   rideCam: null,        // {ride, vehicle} when following a vehicle
   sun: null,
@@ -220,7 +221,7 @@ function initWorld(canvas) {
   const camera = new THREE.PerspectiveCamera(50, 1, 0.5, 1500);
   World.camera = camera;
 
-  scene.add(new THREE.HemisphereLight(0xcfe9ff, 0x5c8f3a, 0.75));
+  World.hemi = new THREE.HemisphereLight(0xcfe9ff, 0x5c8f3a, 0.75); scene.add(World.hemi);
   const sun = new THREE.DirectionalLight(0xfff1d6, 1.7);
   sun.position.set(90, 140, 70);
   sun.castShadow = true;
@@ -234,8 +235,6 @@ function initWorld(canvas) {
   buildCityGround();
   buildMountains();
   buildClouds();
-  buildCity();
-  buildRoad();
   buildBalloons();
 
   World.parkGroup = new THREE.Group(); scene.add(World.parkGroup);
@@ -260,7 +259,7 @@ function buildSky() {
     vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
     fragmentShader: `uniform vec3 top, mid, bot; varying vec3 vP; void main(){ float h = normalize(vP).y; vec3 c = h < 0.0 ? bot : (h < 0.25 ? mix(bot, mid, h/0.25) : mix(mid, top, (h-0.25)/0.75)); gl_FragColor = vec4(c,1.0); }`
   });
-  const sky = new THREE.Mesh(geo, mat); sky.renderOrder = -10; World.scene.add(sky);
+  const sky = new THREE.Mesh(geo, mat); sky.renderOrder = -10; World.scene.add(sky); World.skyMat = mat;
   // sun disc
   const sunTex = canvasTex(128, 128, (ctx, w, h) => {
     const g = ctx.createRadialGradient(w/2, h/2, 6, w/2, h/2, 64);
@@ -268,7 +267,15 @@ function buildSky() {
     ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
   });
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunTex, transparent: true, fog: false, depthWrite: false }));
-  sp.position.set(500, 620, 380); sp.scale.set(260, 260, 1); World.scene.add(sp);
+  sp.position.set(500, 620, 380); sp.scale.set(260, 260, 1); World.scene.add(sp); World.sunSprite = sp;
+  // moon + stars for night time
+  const moonTex = canvasTex(128, 128, (ctx, w, h) => { const g = ctx.createRadialGradient(64, 64, 20, 64, 64, 64); g.addColorStop(0, 'rgba(255,250,230,1)'); g.addColorStop(0.5, 'rgba(240,240,255,0.9)'); g.addColorStop(1, 'rgba(200,210,255,0)'); ctx.fillStyle = g; ctx.fillRect(0, 0, w, h); });
+  const moon = new THREE.Sprite(new THREE.SpriteMaterial({ map: moonTex, transparent: true, fog: false, depthWrite: false, opacity: 0 }));
+  moon.position.set(-520, 560, -300); moon.scale.set(150, 150, 1); World.scene.add(moon); World.moon = moon;
+  const sp3 = []; for (let i = 0; i < 900; i++) { const a = Math.random() * Math.PI * 2, e = Math.random() * 0.5 + 0.08, r = 1200; sp3.push(Math.cos(a) * Math.cos(e) * r, Math.sin(e) * r, Math.sin(a) * Math.cos(e) * r); }
+  const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(sp3, 3));
+  const stars = new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xffffff, size: 3, sizeAttenuation: false, transparent: true, opacity: 0, fog: false, depthWrite: false }));
+  World.scene.add(stars); World.stars = stars;
 }
 
 function buildCityGround() {
@@ -312,15 +319,16 @@ function buildClouds() {
 }
 
 function buildCity() {
+  if (World.city) disposeObject(World.city);
   const boxes = [], glassBoxes = [];
   const palettes = [0xc9d3dc, 0xb8c5d1, 0xe3d7c3, 0xd7b9a3, 0xa9b6c7, 0xf0e6d8, 0x9fb0c2, 0xd9c7b6];
-  const minR = MAX_PARK * CELL / 2 + 26; // stays outside the largest park
+  const minR = parkHalf() + 26; // the city sits just outside the current park; it moves out as the park grows
   const rnd = mulberry(1234);
-  for (let gx = -14; gx <= 14; gx++) for (let gz = -14; gz <= 14; gz++) {
+  for (let gx = -24; gx <= 24; gx++) for (let gz = -24; gz <= 24; gz++) {
     const x = gx * 24 + (rnd() - 0.5) * 6, z = gz * 24 + (rnd() - 0.5) * 6;
     const d = Math.hypot(x, z);
     if (d < minR) continue;
-    if (d > 360) continue;
+    if (d > minR + 340) continue;
     if (rnd() < 0.12) continue; // parks / gaps
     const near = Math.max(0, 1 - (d - minR) / 200);
     let h = 8 + rnd() * 18 + rnd() * rnd() * 70 * (0.4 + near);
@@ -346,11 +354,15 @@ function buildCity() {
 }
 
 function buildRoad() {
-  const R = MAX_PARK * CELL / 2 + 14;
-  const ring = new THREE.Mesh(new THREE.RingGeometry(R - 5, R + 5, 96), new THREE.MeshLambertMaterial({ color: 0x3f4448 }));
-  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; ring.receiveShadow = true; World.scene.add(ring);
-  const dash = new THREE.Mesh(new THREE.RingGeometry(R - 0.25, R + 0.25, 96), new THREE.MeshBasicMaterial({ color: 0xf7e26b }));
-  dash.rotation.x = -Math.PI / 2; dash.position.y = 0.03; World.scene.add(dash);
+  const R = parkHalf() + 14;
+  if (World.road) disposeObject(World.road);
+  const road = new THREE.Group(); World.road = road; World.scene.add(road);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(R - 5, R + 5, 128), new THREE.MeshLambertMaterial({ color: 0x3f4448 }));
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; ring.receiveShadow = true; road.add(ring);
+  const dash = new THREE.Mesh(new THREE.RingGeometry(R - 0.25, R + 0.25, 128), new THREE.MeshBasicMaterial({ color: 0xf7e26b }));
+  dash.rotation.x = -Math.PI / 2; dash.position.y = 0.03; road.add(dash);
+  for (const car of World.cars) { car.userData.r = R + (car.userData.lane ? 2.6 : -2.6); }
+  if (World.cars.length) return;
   const colors = [0xff4d4d, 0x4da6ff, 0xffd84d, 0x66e07a, 0xffffff, 0xff9f43];
   for (let i = 0; i < 14; i++) {
     const car = new THREE.Group();
@@ -358,7 +370,7 @@ function buildRoad() {
     body.position.y = 0.75; car.add(body);
     const top = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.8, 1.5), new THREE.MeshStandardMaterial({ color: 0x9bd2ff, roughness: 0.2 }));
     top.position.set(-0.1, 1.65, 0); car.add(top);
-    car.userData = { a: Math.random() * Math.PI * 2, r: R + (i % 2 ? 2.6 : -2.6), speed: (i % 2 ? 1 : -1) * (0.05 + Math.random() * 0.03) };
+    car.userData = { a: Math.random() * Math.PI * 2, r: R + (i % 2 ? 2.6 : -2.6), lane: i % 2, speed: (i % 2 ? 1 : -1) * (0.05 + Math.random() * 0.03) };
     World.scene.add(car); World.cars.push(car);
   }
 }
@@ -427,6 +439,35 @@ function rebuildPark() {
   g.add(grid); World.grid = grid;
   // shadow camera covers park
   const sc = World.sun.shadow.camera; const ext = half + 12; sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext; sc.updateProjectionMatrix();
+  // lamp posts along the main path
+  const lampMat = new THREE.MeshStandardMaterial({ color: 0x37474f }); const bulbMat = new THREE.MeshStandardMaterial({ color: 0xfff1b0, emissive: 0xffe08a, emissiveIntensity: 0.2 });
+  World.pathLamps = [];
+  for (let z = -half + CELL * 2; z < half - CELL; z += CELL * 3) for (const x of [-CELL * 1.1, CELL * 1.1]) {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 3.2, 6), lampMat); pole.position.set(x, 1.6, z); g.add(pole);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 6), bulbMat); bulb.position.set(x, 3.3, z); g.add(bulb); World.pathLamps.push(bulb);
+  }
+  World.lampMat = bulbMat;
+  // the city and road move outward as the park grows
+  buildRoad(); buildCity();
+  World.scene.fog.near = half * 1.2 + 120; World.scene.fog.far = half + 560;
+}
+
+// ---------- day / night ----------
+const _cA = new THREE.Color(), _cB = new THREE.Color();
+function setNight(on) { World.nightTarget = on ? 1 : 0; }
+function updateDayNight(dt) {
+  const w = World; if (Math.abs(w.night - w.nightTarget) < 0.001) return;
+  w.night += Math.sign(w.nightTarget - w.night) * Math.min(Math.abs(w.nightTarget - w.night), dt * 0.35);
+  const n = w.night;
+  w.scene.background.copy(_cA.set(0x8ed0ff).lerp(_cB.set(0x070b1e), n));
+  w.scene.fog.color.copy(_cA.set(0xbfe3ff).lerp(_cB.set(0x0b1028), n));
+  w.sun.intensity = 1.7 - n * 1.5; w.sun.color.copy(_cA.set(0xfff1d6).lerp(_cB.set(0x9fb0ff), n));
+  w.hemi.intensity = 0.75 - n * 0.45; w.hemi.color.copy(_cA.set(0xcfe9ff).lerp(_cB.set(0x2a3560), n));
+  const u = w.skyMat.uniforms; u.top.value.copy(_cA.set(0x3d8fe8).lerp(_cB.set(0x03040f), n)); u.mid.value.copy(_cA.set(0x8ed0ff).lerp(_cB.set(0x0b1230), n)); u.bot.value.copy(_cA.set(0xe6f4ff).lerp(_cB.set(0x2a2450), n));
+  w.sunSprite.material.opacity = 1 - n; w.moon.material.opacity = n; w.stars.material.opacity = n;
+  if (w.city) w.city.children.forEach(m => { m.material.emissiveIntensity = 0.9 + n * 1.8; });
+  if (w.lampMat) w.lampMat.emissiveIntensity = 0.2 + n * 2.5;
+  w.renderer.toneMappingExposure = 1.05 - n * 0.15;
 }
 
 // ---------- camera ----------
@@ -521,7 +562,7 @@ function panCamera(dx, dy) {
 
 // ---------- ambient animation ----------
 function animateWorld(dt, t) {
-  animateWater(dt);
+  animateWater(dt); updateDayNight(dt);
   for (const s of World.clouds) { s.position.x += s.userData.speed * dt; if (s.position.x > 750) s.position.x = -750; }
   for (const car of World.cars) { const u = car.userData; u.a += u.speed * dt; car.position.set(Math.cos(u.a) * u.r, 0, Math.sin(u.a) * u.r); car.rotation.y = -u.a + (u.speed > 0 ? Math.PI : 0); }
   for (const b of World.balloons) { const u = b.userData; b.position.y += u.vy * dt; b.position.x += Math.sin(t * 0.5 + u.wob) * dt * 1.2; if (b.position.y > 90) { b.position.y = 6; b.position.x = (Math.random() - 0.5) * 120; b.position.z = (Math.random() - 0.5) * 120; } }
