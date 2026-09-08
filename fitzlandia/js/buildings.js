@@ -57,14 +57,14 @@ function buildBuildingMesh(b) {
   const d = b.def, g = new THREE.Group();
   const std = (color, extra = {}) => new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.7 }, extra));
   if (d.kind === 'shop') {
-    const body = new THREE.Mesh(new THREE.BoxGeometry(3.3, 2.6, 3.0), std(d.color)); body.position.y = 1.3; body.castShadow = true; body.receiveShadow = true; g.add(body);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(3.3, 2.6, 3.0), glow(std(d.color), d.color, 0.45)); body.position.y = 1.3; body.castShadow = true; body.receiveShadow = true; g.add(body);
     const roof = new THREE.Mesh(new THREE.ConeGeometry(2.7, 1.6, 4), std(0xffffff, { map: stripeTexture(d.roof, d.roof2) })); roof.position.y = 3.4; roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
     const door = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.5, 0.1), std(0x5d4037)); door.position.set(0, 0.75, 1.52); g.add(door);
-    for (const x of [-1.0, 1.0]) { const win = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.7, 0.1), std(0xbfe8ff, { roughness: 0.2 })); win.position.set(x, 1.5, 1.52); g.add(win); }
+    for (const x of [-1.0, 1.0]) { const win = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.7, 0.1), glow(std(0xbfe8ff, { roughness: 0.2 }), 0xffe9a0, 1.6)); win.position.set(x, 1.5, 1.52); g.add(win); }
     const awn = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.12, 1.0), std(0xffffff, { map: stripeTexture(d.roof2, '#ffffff') })); awn.position.set(0, 2.15, 1.9); awn.rotation.x = 0.25; awn.castShadow = true; g.add(awn);
     addSign(g, d.icon + ' ' + d.name, hex(d.color), 2.9, 3.0, 1.6);
   } else if (d.kind === 'booth') {
-    const counter = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.1, 2.6), std(d.color)); counter.position.y = 0.55; counter.castShadow = true; g.add(counter);
+    const counter = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.1, 2.6), glow(std(d.color), d.color, 0.5)); counter.position.y = 0.55; counter.castShadow = true; g.add(counter);
     const back = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.4, 0.3), std(d.color)); back.position.set(0, 1.2, -1.15); g.add(back);
     for (const x of [-1.45, 1.45]) { const p = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 3, 6), std(0xffffff)); p.position.set(x, 1.5, 1.15); g.add(p); }
     const canopy = new THREE.Mesh(new THREE.ConeGeometry(2.6, 1.2, 4), std(0xffffff, { map: stripeTexture(d.roof, d.roof2) })); canopy.position.y = 3.55; canopy.rotation.y = Math.PI / 4; canopy.castShadow = true; g.add(canopy);
@@ -75,8 +75,8 @@ function buildBuildingMesh(b) {
     addSign(g, d.icon + ' ' + d.name, hex(d.color), 2.9, 2.9, 1.3);
   } else if (b.type === 'carousel') {
     const base = new THREE.Mesh(new THREE.CylinderGeometry(3.6, 3.8, 0.5, 24), std(0xfff3c4)); base.position.y = 0.25; base.receiveShadow = true; g.add(base);
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 4.5, 10), std(0xffd93d, { metalness: 0.4 })); pole.position.y = 2.5; g.add(pole);
-    const roof = new THREE.Mesh(new THREE.ConeGeometry(4.0, 1.8, 16), std(0xffffff, { map: stripeTexture('#ff3d6e', '#ffffff') })); roof.position.y = 5.3; roof.castShadow = true; g.add(roof);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 4.5, 10), glow(std(0xffd93d, { metalness: 0.4 }), 0xffd93d, 0.8)); pole.position.y = 2.5; g.add(pole);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(4.0, 1.8, 16), glow(std(0xffffff, { map: stripeTexture('#ff3d6e', '#ffffff') }), 0xffd0a0, 0.5)); roof.position.y = 5.3; roof.castShadow = true; g.add(roof);
     const spin = new THREE.Group(); spin.position.y = 0.5; g.add(spin);
     const horseColors = [0xffffff, 0xff8fb1, 0x8fd0ff, 0xffe066, 0xb39ddb, 0xa5d6a7];
     for (let i = 0; i < 6; i++) {
@@ -96,14 +96,15 @@ function buildBuildingMesh(b) {
     const frameMat = std(0xff3d6e, { metalness: 0.3 });
     for (const s of [-1, 1]) { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.35, R * 1.55, 0.35), frameMat); leg.position.set(s * 2.0, R / 2 + 0.5, 0); leg.rotation.z = s * 0.28; leg.castShadow = true; g.add(leg); }
     const wheel = new THREE.Group(); wheel.position.y = R + 1;
-    for (const z of [-0.6, 0.6]) { const ring = new THREE.Mesh(new THREE.TorusGeometry(R, 0.15, 8, 40), std(0xffd93d, { metalness: 0.4 })); ring.position.z = z; wheel.add(ring); }
+    const ringMat = glow(std(0xffd93d, { metalness: 0.4 }), 0xffd93d, 1.0);
+    for (const z of [-0.6, 0.6]) { const ring = new THREE.Mesh(new THREE.TorusGeometry(R, 0.15, 8, 40), ringMat); ring.position.z = z; wheel.add(ring); }
     for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI; const sp = new THREE.Mesh(new THREE.BoxGeometry(0.12, R * 2, 0.12), std(0xffffff)); sp.rotation.z = a; wheel.add(sp); }
     const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1.6, 12), std(0xffffff)); hub.rotation.x = Math.PI / 2; wheel.add(hub);
     const gondolas = [];
     const gcol = [0xff5252, 0x4fb0ff, 0xffd93d, 0x7ed957, 0xff6fb5, 0xffa726, 0xb39ddb, 0x80deea];
     for (let i = 0; i < 8; i++) {
       const a = i / 8 * Math.PI * 2; const gd = new THREE.Group();
-      const cab = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.9, 1.3), std(gcol[i])); cab.position.y = -0.7; cab.castShadow = true; gd.add(cab);
+      const cab = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.9, 1.3), glow(std(gcol[i]), gcol[i], 0.7)); cab.position.y = -0.7; cab.castShadow = true; gd.add(cab);
       const top = new THREE.Mesh(new THREE.ConeGeometry(0.8, 0.5, 8), std(gcol[i])); top.position.y = -0.1; gd.add(top);
       gd.userData.a = a; wheel.add(gd); gondolas.push(gd);
     }
@@ -116,8 +117,8 @@ function buildBuildingMesh(b) {
     const roof = new THREE.Mesh(new THREE.ConeGeometry(5.2, 3.4, 4), std(0x1c1026)); roof.position.y = 6.9; roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
     const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 3.5, 8), wood); tower.position.set(2.4, 6.2, -1.6); g.add(tower);
     const cap = new THREE.Mesh(new THREE.ConeGeometry(1.2, 1.8, 8), std(0x1c1026)); cap.position.set(2.4, 8.8, -1.6); g.add(cap);
-    const glow = new THREE.MeshBasicMaterial({ color: 0x7dff9a });
-    for (const [x, y] of [[-2, 3.4], [2, 3.4], [-2, 1.4], [2, 1.4]]) { const win = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.0, 0.1), glow); win.position.set(x, y, 2.83); g.add(win); }
+    const winGlow = new THREE.MeshBasicMaterial({ color: 0x7dff9a });
+    for (const [x, y] of [[-2, 3.4], [2, 3.4], [-2, 1.4], [2, 1.4]]) { const win = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.0, 0.1), winGlow); win.position.set(x, y, 2.83); g.add(win); }
     const door = new THREE.Mesh(new THREE.BoxGeometry(1.6, 2.6, 0.12), std(0x120a18)); door.position.set(0, 1.3, 2.83); g.add(door);
     const ghost = new THREE.Mesh(new THREE.SphereGeometry(0.6, 12, 10), std(0xffffff, { emissive: 0x99aaff, emissiveIntensity: 0.5 })); ghost.scale.y = 1.3; ghost.position.set(-2.6, 6.2, 1.2); g.add(ghost);
     const pl = new THREE.PointLight(0x7dff9a, 1.2, 12, 2); pl.position.set(0, 2.5, 3.5); g.add(pl);
@@ -131,8 +132,8 @@ function buildBuildingMesh(b) {
   } else if (b.type === 'droptower') {
     const H = 16; const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.6, H, 10), std(0xb0bec5, { metalness: 0.5, roughness: 0.4 })); pole.position.y = H / 2; pole.castShadow = true; g.add(pole);
     const base = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 2.0, 0.5, 16), std(0x90a4ae)); base.position.y = 0.25; g.add(base);
-    const top = new THREE.Mesh(new THREE.ConeGeometry(0.9, 1.6, 8), std(d.color)); top.position.y = H + 0.7; g.add(top);
-    const gond = new THREE.Group(); const ring = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.25, 8, 20), std(d.color)); ring.rotation.x = Math.PI / 2; gond.add(ring);
+    const top = new THREE.Mesh(new THREE.ConeGeometry(0.9, 1.6, 8), glow(std(d.color), d.color, 1.2)); top.position.y = H + 0.7; g.add(top);
+    const gond = new THREE.Group(); const ring = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.25, 8, 20), glow(std(d.color), d.color, 0.9)); ring.rotation.x = Math.PI / 2; gond.add(ring);
     for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2; const seat = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.7, 0.6), std(0x263238)); seat.position.set(Math.cos(a) * 1.3, 0.35, Math.sin(a) * 1.3); seat.rotation.y = -a; gond.add(seat); }
     gond.position.y = 1; g.add(gond); b.seats = [gond];
     b.anim = (t) => { const T = t % 16; let y; if (T < 8) y = 1 + (T / 8) * (H - 3); else if (T < 10.5) y = H - 2 + Math.sin(T * 6) * 0.05; else if (T < 11.1) { const u = (T - 10.5) / 0.6; y = (H - 2) - u * u * (H - 3); } else if (T < 12) y = 1 + Math.abs(Math.sin((T - 11.1) * 8)) * 0.6 * (1 - (T - 11.1)); else y = 1; gond.position.y = y; gond.rotation.y = t * 0.3; };
@@ -144,7 +145,7 @@ function buildBuildingMesh(b) {
     const pivot = new THREE.Group(); pivot.position.y = 7.0; g.add(pivot);
     for (const sz of [-1.1, 1.1]) { const arm = new THREE.Mesh(new THREE.BoxGeometry(0.25, 5.6, 0.25), frame); arm.position.set(0, -2.8, sz); pivot.add(arm); }
     const boat = new THREE.Group(); boat.position.y = -5.6;
-    const hull = new THREE.Mesh(new THREE.BoxGeometry(5.6, 1.2, 2.0), std(d.color)); hull.castShadow = true; boat.add(hull);
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(5.6, 1.2, 2.0), glow(std(d.color), 0xffa060, 0.5)); hull.castShadow = true; boat.add(hull);
     for (const e of [-1, 1]) { const bow = new THREE.Mesh(new THREE.ConeGeometry(1.0, 1.8, 4), std(d.color)); bow.rotation.z = e * Math.PI / 2; bow.rotation.y = Math.PI / 4; bow.position.set(e * 3.6, 0.4, 0); boat.add(bow); }
     for (let i = 0; i < 4; i++) { const row = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.5, 1.6), std(0x263238)); row.position.set(-1.9 + i * 1.25, 0.85, 0); boat.add(row); }
     const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 2.4, 6), std(0x5d4037)); mast.position.set(0, 1.6, 0); boat.add(mast);
@@ -154,7 +155,7 @@ function buildBuildingMesh(b) {
     addSign(g, '🏴‍☠️ Pirate Ship', hex(d.color), 5, 1.0, 3.2);
   } else if (b.type === 'bumper') {
     const floor = new THREE.Mesh(new THREE.BoxGeometry(7.4, 0.3, 7.4), std(0x37474f, { roughness: 0.4, metalness: 0.2 })); floor.position.y = 0.15; floor.receiveShadow = true; g.add(floor);
-    const rim = new THREE.Mesh(new THREE.BoxGeometry(7.8, 0.6, 7.8), std(0xffca28)); rim.position.y = 0.3; g.add(rim); const inner = new THREE.Mesh(new THREE.BoxGeometry(7.0, 0.7, 7.0), std(0x37474f)); inner.position.y = 0.35; g.add(inner);
+    const rim = new THREE.Mesh(new THREE.BoxGeometry(7.8, 0.6, 7.8), glow(std(0xffca28), 0xffca28, 0.9)); rim.position.y = 0.3; g.add(rim); const inner = new THREE.Mesh(new THREE.BoxGeometry(7.0, 0.7, 7.0), std(0x37474f)); inner.position.y = 0.35; g.add(inner);
     for (const [x, z] of [[-3.7, -3.7], [3.7, -3.7], [-3.7, 3.7], [3.7, 3.7]]) { const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 5, 6), std(0xffca28)); post.position.set(x, 2.5, z); g.add(post); }
     const roof = new THREE.Mesh(new THREE.BoxGeometry(8.2, 0.25, 8.2), std(0xffffff, { map: stripeTexture('#1e90ff', '#ffffff') })); roof.position.y = 5.1; roof.castShadow = true; g.add(roof);
     const cars = []; const cc = [0xff3d6e, 0x2ecc71, 0xffd11a, 0x9b59b6, 0xff8c1a];
@@ -174,7 +175,8 @@ function buildBuildingMesh(b) {
   } else if (b.type === 'lamp') {
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 3.6, 6), std(0x37474f)); pole.position.y = 1.8; pole.castShadow = true; g.add(pole);
     const arm = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 0.08), std(0x37474f)); arm.position.set(0.4, 3.5, 0); g.add(arm);
-    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), World.lampMat || std(0xfff1b0)); bulb.position.set(0.8, 3.3, 0); g.add(bulb);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), glow(std(0xfff1b0), 0xffe08a, 2.5)); bulb.position.set(0.8, 3.3, 0); g.add(bulb);
+    addNightLight(g, 0.8, 3.2, 0, 0xffe0a0, 2.0, 13);
     const bench = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.12, 0.5), std(0x8d6e63)); bench.position.set(-0.9, 0.5, 0.6); g.add(bench); for (const x of [-1.5, -0.3]) { const bl = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 0.4), std(0x5d4037)); bl.position.set(x, 0.25, 0.6); g.add(bl); }
   } else if (b.type === 'statue') {
     const ped = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.4, 1.6), std(0xcfd8dc)); ped.position.y = 0.7; ped.castShadow = true; g.add(ped);
@@ -195,7 +197,7 @@ function buildBuildingMesh(b) {
     for (let i = 0; i < 3; i++) { const s = new THREE.Mesh(new THREE.SphereGeometry(1.0 + Math.random() * 0.4, 10, 8), std(greens[i])); s.position.set((Math.random() - 0.5) * 0.9, 2.0 + i * 0.55, (Math.random() - 0.5) * 0.9); s.castShadow = true; g.add(s); }
     g.rotation.y = Math.random() * 6;
   } else if (b.type === 'fountain') {
-    const basin = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.7, 0.6, 20), std(0xd7ccc8)); basin.position.y = 0.3; basin.castShadow = true; g.add(basin);
+    const basin = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.7, 0.6, 20), glow(std(0xd7ccc8), 0x80c0ff, 0.5)); basin.position.y = 0.3; basin.castShadow = true; g.add(basin);
     const wbase = new THREE.Mesh(new THREE.CylinderGeometry(1.45, 1.45, 0.1, 20), std(0x2a9ad8)); wbase.position.y = 0.55; g.add(wbase);
     const water = new THREE.Mesh(new THREE.CircleGeometry(1.45, 24), waterMaterial()); water.rotation.x = -Math.PI / 2; water.position.y = 0.62; water.renderOrder = 2; g.add(water);
     const col = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.3, 1.6, 8), std(0xd7ccc8)); col.position.y = 1.2; g.add(col);

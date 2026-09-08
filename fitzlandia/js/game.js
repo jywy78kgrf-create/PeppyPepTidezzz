@@ -103,31 +103,31 @@ const CHALLENGES = [
   { id: 'stars15', icon: '👑', title: 'Superstar Park', desc: 'Collect 15 stars', reward: 3000, check: () => [G.totalStars(), 15] },
   { id: 'stars30', icon: '🏆', title: 'FitzLandia Legend', desc: 'Collect 30 stars', reward: 5000, check: () => [G.totalStars(), 30] },
   // ---- science & engineering ----
-  { id: 'onelift', icon: '🔋', title: 'Energy Saver', desc: 'A 4-star coaster using only ONE lift piece (no boosters)', reward: 1500, check: () => [G.rides.some(r => r.open && r.type === 'coaster' && r.stars >= 4 && r.pieces.filter(p => PIECES[p.type].lift).length === 1 && !r.pieces.some(p => p.type === 'booster')) ? 1 : 0, 1] },
-  { id: 'gravity', icon: '🍎', title: 'Pure Gravity', desc: 'Reach speed 22 with no boosters', reward: 1200, check: () => [Math.floor(maxStat(r => r.pieces.some(p => p.type === 'booster') ? 0 : r.stats.maxV)), 22] },
-  { id: 'ratio21', icon: '📐', title: 'Two to One', desc: 'A coaster with exactly twice as many drops as lifts', reward: 1000, check: () => [G.rides.some(r => r.open && r.stats && r.stats.lifts > 0 && r.stats.dropsN === r.stats.lifts * 2) ? 1 : 0, 1] },
-  { id: 'halfhalf', icon: '½', title: 'Half and Half', desc: 'A ride whose biggest drop is exactly half its top height', reward: 1000, check: () => [G.rides.some(r => r.open && r.stats && r.stats.maxLevel >= 4 && r.stats.bigDrop * 2 === r.stats.maxLevel) ? 1 : 0, 1] },
-  { id: 'budget', icon: '💸', title: 'Budget Builder', desc: 'A 4-star ride that cost under $500', reward: 1500, check: () => [G.rides.some(r => r.open && r.stars >= 4 && r.cost < 500) ? 1 : 0, 1] },
-  { id: 'longride', icon: '⏱️', title: 'Marathon Ride', desc: 'A ride that lasts 60 seconds', reward: 1500, check: () => [Math.floor(maxStat(r => r.stats.time)), 60] },
-  { id: 'pieces50', icon: '🧩', title: 'Long Haul', desc: 'A single ride with 50+ pieces', reward: 1500, check: () => [maxStat(r => r.pieces.length), 50] },
+  { id: 'onelift', icon: '🔋', title: 'One Lift Wonder', desc: 'Get 4 stars using just ONE Chain Lift and no Boosters. Let gravity do the work!', reward: 1500, check: () => [G.rides.some(r => r.open && r.type === 'coaster' && r.stars >= 4 && r.pieces.filter(p => PIECES[p.type].lift).length === 1 && !r.pieces.some(p => p.type === 'booster')) ? 1 : 0, 1] },
+  { id: 'gravity', icon: '🍎', title: 'Gravity Power', desc: 'Go speed 22 without any Boosters (hint: a really tall hill!)', reward: 1200, check: () => [Math.floor(maxStat(r => r.pieces.some(p => p.type === 'booster') ? 0 : r.stats.maxV)), 22] },
+  { id: 'ratio21', icon: '🔢', title: 'Double Drops', desc: 'Build a coaster with 2 drops for every lift (like 2 lifts and 4 drops)', reward: 1000, check: () => [G.rides.some(r => r.open && r.stats && r.stats.lifts > 0 && r.stats.dropsN === r.stats.lifts * 2) ? 1 : 0, 1] },
+  { id: 'halfhalf', icon: '½', title: 'Half Way Down', desc: 'Make a ride where the biggest drop is half as tall as the top (top 8, drop 4)', reward: 1000, check: () => [G.rides.some(r => r.open && r.stats && r.stats.maxLevel >= 4 && r.stats.bigDrop * 2 === r.stats.maxLevel) ? 1 : 0, 1] },
+  { id: 'budget', icon: '💸', title: 'Bargain Coaster', desc: 'Get 4 stars on a ride that cost less than $500 to build', reward: 1500, check: () => [G.rides.some(r => r.open && r.stars >= 4 && r.cost < 500) ? 1 : 0, 1] },
+  { id: 'longride', icon: '⏱️', title: 'Super Long Ride', desc: 'Make a ride that takes 60 seconds from start to finish', reward: 1500, check: () => [Math.floor(maxStat(r => r.stats.time)), 60] },
+  { id: 'pieces50', icon: '🧩', title: 'Fifty Pieces', desc: 'Build one ride with 50 or more pieces', reward: 1500, check: () => [maxStat(r => r.pieces.length), 50] },
   { id: 'maxheight', icon: '🚀', title: 'Top of the World', desc: 'A ride that reaches height 12', reward: 2000, check: () => [maxStat(r => r.stats.maxLevel), 12] },
-  { id: 'speed30', icon: '💨', title: 'Sound Barrier', desc: 'Reach speed 30', reward: 2500, check: () => [Math.floor(maxStat(r => r.stats.maxV)), 30] },
+  { id: 'speed30', icon: '💨', title: 'Super Speed', desc: 'Go speed 30 on a ride', reward: 2500, check: () => [Math.floor(maxStat(r => r.stats.maxV)), 30] },
   { id: 'inv6', icon: '🌀', title: 'Inversion Insanity', desc: '6 loops or corkscrews in one ride', reward: 3000, check: () => [maxStat(r => (r.stats.loops || 0) + (r.stats.corks || 0)), 6] },
   { id: 'tunnel3', icon: '🚇', title: 'Mole Coaster', desc: 'A ride with 3 tunnels', reward: 800, check: () => [maxStat(r => r.stats.tunnels), 3] },
   { id: 'photo', icon: '📸', title: 'Say Cheese', desc: 'Sell ride photos with a Photo Cam', reward: 700, check: () => [maxStat(r => r.stats.photos), 1] },
   { id: 'splash3', icon: '🌊', title: 'Triple Splash', desc: 'A water ride with 3 Splash Pools', reward: 1200, check: () => [maxStat(r => r.type === 'water' ? r.pieces.filter(p => p.type === 'splash').length : 0), 3] },
   { id: 'fivestar3', icon: '🌟', title: 'Star Studio', desc: 'Three 5-star rides', reward: 4000, check: () => [G.rides.filter(r => r.open && r.stars === 5).length, 3] },
   // ---- architect & park design ----
-  { id: 'corners', icon: '🧭', title: 'Four Corners', desc: 'Put a tree in all four corners of the park', reward: 800, check: () => { const n = World.parkCells / 2; const c = [[-n, -n], [n - 1, -n], [-n, n - 1], [n - 1, n - 1]]; return [c.filter(([x, z]) => G.buildings.some(b => b.type === 'tree' && b.cx === x && b.cz === z)).length, 4]; } },
+  { id: 'corners', icon: '🧭', title: 'Four Corners', desc: 'Plant a tree in each of the 4 corners of the park', reward: 800, check: () => { const n = World.parkCells / 2; const c = [[-n, -n], [n - 1, -n], [-n, n - 1], [n - 1, n - 1]]; return [c.filter(([x, z]) => G.buildings.some(b => b.type === 'tree' && b.cx === x && b.cz === z)).length, 4]; } },
   { id: 'paths20', icon: '🧱', title: 'Pathmaker', desc: 'Lay 20 path tiles', reward: 500, check: () => [G.buildings.filter(b => b.type === 'path').length, 20] },
   { id: 'paths100', icon: '🏗️', title: 'City Planner', desc: 'Lay 100 path tiles', reward: 2000, check: () => [G.buildings.filter(b => b.type === 'path').length, 100] },
   { id: 'green', icon: '🌳', title: 'Green Park', desc: '25 trees and flower beds', reward: 1000, check: () => [G.buildings.filter(b => b.type === 'tree' || b.type === 'flowers').length, 25] },
   { id: 'lamps', icon: '💡', title: 'Light It Up', desc: '10 lamp posts', reward: 600, check: () => [G.buildings.filter(b => b.type === 'lamp').length, 10] },
-  { id: 'balanced', icon: '⚖️', title: 'Balanced Park', desc: 'Same number of shops as open rides (at least 4 each)', reward: 1200, check: () => { const r = G.rides.filter(x => x.open).length, sh = G.buildings.filter(b => b.def.kind === 'shop' || b.def.kind === 'booth').length; return [r >= 4 && r === sh ? 1 : 0, 1]; } },
-  { id: 'allshops', icon: '🛍️', title: 'Grand Bazaar', desc: 'Build every kind of shop and game', reward: 2500, check: () => [SHOP_ORDER.filter(t => (SHOPS[t].kind === 'shop' || SHOPS[t].kind === 'booth') && G.buildings.some(b => b.type === t)).length, SHOP_ORDER.filter(t => SHOPS[t].kind === 'shop' || SHOPS[t].kind === 'booth').length] },
+  { id: 'balanced', icon: '⚖️', title: 'Even Steven', desc: 'Have the same number of shops as rides (at least 4 of each)', reward: 1200, check: () => { const r = G.rides.filter(x => x.open).length, sh = G.buildings.filter(b => b.def.kind === 'shop' || b.def.kind === 'booth').length; return [r >= 4 && r === sh ? 1 : 0, 1]; } },
+  { id: 'allshops', icon: '🛍️', title: 'One of Everything', desc: 'Build every kind of shop and game', reward: 2500, check: () => [SHOP_ORDER.filter(t => (SHOPS[t].kind === 'shop' || SHOPS[t].kind === 'booth') && G.buildings.some(b => b.type === t)).length, SHOP_ORDER.filter(t => SHOPS[t].kind === 'shop' || SHOPS[t].kind === 'booth').length] },
   { id: 'attractions', icon: '🎪', title: 'Thrill Collection', desc: 'Build the Drop Tower, Pirate Ship and Bumper Cars', reward: 3000, check: () => [['droptower', 'pirate', 'bumper'].filter(t => G.buildings.some(b => b.type === t)).length, 3] },
   { id: 'fireworks', icon: '🎆', title: 'Night Show', desc: 'Build a Fireworks launcher', reward: 800, check: () => [G.buildings.filter(b => b.type === 'fireworks').length, 1] },
-  { id: 'skyline', icon: '🏙️', title: 'Skyline', desc: '3 rides taller than height 8', reward: 2500, check: () => [G.rides.filter(r => r.open && r.stats && r.stats.maxLevel > 8).length, 3] },
+  { id: 'skyline', icon: '🏙️', title: 'Sky High Trio', desc: 'Have 3 rides that go higher than 8 blocks', reward: 2500, check: () => [G.rides.filter(r => r.open && r.stats && r.stats.maxLevel > 8).length, 3] },
   { id: 'land2', icon: '🌍', title: 'Big Land', desc: 'Grow the park to 44 cells wide', reward: 3000, check: () => [World.parkCells, 44] },
   { id: 'land3', icon: '🗺️', title: 'Huge Land', desc: 'Grow the park to 56 cells wide', reward: 6000, check: () => [World.parkCells, 56] },
   { id: 'landmax', icon: '🌐', title: 'FitzLandia Nation', desc: 'Grow the park to its biggest size (68)', reward: 15000, check: () => [World.parkCells, 68] },
@@ -141,7 +141,7 @@ const CHALLENGES = [
   { id: 'riders5k', icon: '🎟️', title: 'Five Thousand Riders', desc: '5,000 guests ride your rides', reward: 20000, check: () => [G.stats.ridersServed || 0, 5000] },
   { id: 'guests200', icon: '🎉', title: 'Festival Crowd', desc: '200 guests in the park at once', reward: 6000, check: () => [G.stats.maxGuests || 0, 200] },
   { id: 'rich2', icon: '💎', title: 'Millionaire', desc: 'Earn $100,000 in total', reward: 20000, check: () => [Math.floor(G.totalEarned), 100000] },
-  { id: 'rich3', icon: '👑', title: 'Emperor of Fun', desc: 'Earn $500,000 in total', reward: 100000, check: () => [Math.floor(G.totalEarned), 500000] },
+  { id: 'rich3', icon: '👑', title: 'King of Fun', desc: 'Earn $500,000 in total', reward: 100000, check: () => [Math.floor(G.totalEarned), 500000] },
   { id: 'lvl5', icon: '🏰', title: 'Mega Park Status', desc: 'Reach park level 5', reward: 5000, check: () => [G.level(), 5] },
   { id: 'lvl8', icon: '🪐', title: 'Galactic Park Status', desc: 'Reach park level 8', reward: 25000, check: () => [G.level(), 8] },
   { id: 'lvl10', icon: '♾️', title: 'FitzLandia Supreme', desc: 'Reach park level 10', reward: 100000, check: () => [G.level(), 10] },
@@ -552,7 +552,12 @@ function passTest() {
   if (rating.stars >= 4) Particles.fireworks(c.clone().setY(6)); else Particles.confetti(c.clone().setY(5));
   Audio_.fanfare();
   const hTop = rating.maxLevel * RISE, vTheory = Math.sqrt(2 * PHYS.g * hTop);
-  const science = `<p class="tip">🔬 <b>Science:</b> your highest point is ${rating.maxLevel} blocks (${hTop} m). Gravity alone can give at most √(2·g·h) = √(2 × 9.8 × ${hTop}) ≈ <b>${vTheory.toFixed(0)}</b> speed. You hit <b>${Math.floor(t.stats.maxV)}</b>${t.stats.maxV > vTheory + 0.5 ? ' (boosters add energy!)' : ' (friction stole the rest)'}.<br>📐 <b>Ratios:</b> ${rating.lifts} lift${rating.lifts === 1 ? '' : 's'} : ${rating.dropsN} drop${rating.dropsN === 1 ? '' : 's'} · ${rating.pieces} pieces for $${rating.cost} = <b>$${(rating.cost / rating.pieces).toFixed(1)}</b> per piece · stars per $100 = <b>${(rating.stars / rating.cost * 100).toFixed(2)}</b></p>`;
+  const usedBoost = r.pieces.some(p => p.type === 'booster');
+  const perTrip = ticketPrice(r) * (r.vehicle ? r.vehicle.seats.length : 6);
+  const fact1 = `🏔️ Your tallest hill is <b>${rating.maxLevel} blocks</b> high. Taller hill = faster cars! A hill that tall can make the cars go about <b>${vTheory.toFixed(0)}</b> fast.`;
+  const fact2 = t.stats.maxV > vTheory + 0.5 ? `🚀 You went <b>${Math.floor(t.stats.maxV)}</b> — even faster, because Boosters give extra push!` : `💨 You went <b>${Math.floor(t.stats.maxV)}</b>. The wheels rubbing on the track (that's called friction) slowed you down a tiny bit.`;
+  const fact3 = `🔢 This ride has <b>${rating.lifts}</b> lift${rating.lifts === 1 ? '' : 's'} and <b>${rating.dropsN}</b> drop${rating.dropsN === 1 ? '' : 's'}. It cost <b>$${rating.cost}</b> to build, and every trip full of riders earns you about <b>$${perTrip}</b>.`;
+  const science = `<p class="tip" style="text-align:left">${fact1}<br>${fact2}<br>${fact3}</p>`;
   const tips = rating.stars < 5 ? `<p class="tip">💡 Want more stars? ${r.water ? 'Bigger drops into the Splash Pool, more turns' : 'Taller lift hills, bigger drops, more hills and turns'} make it more exciting!</p>` : '<p class="tip">🌟 A PERFECT ride! Guests will love it!</p>';
   showModal(`<h2>🎉 IT WORKS! ${r.name} is OPEN!</h2><div class="stars">${starStr(rating.stars)}</div>
     <div class="statgrid"><div>⚡ Top speed<b>${Math.floor(t.stats.maxV)}</b></div><div>🏔️ Highest<b>${rating.maxLevel}</b></div><div>⬇️ Biggest drop<b>${rating.bigDrop}</b></div><div>🌀 Turns<b>${t.stats.turns}</b></div><div>🙃 Upside-down<b>${t.stats.inversions}</b></div><div>⏱️ Ride time<b>${Math.floor(t.stats.time)}s</b></div><div>🎟️ Ticket<b>$${ticketPrice(r)}</b></div></div>
@@ -638,16 +643,16 @@ function showMenu() {
   $('#mReset').onclick = () => { showModal(`<h2>🧨 Start a brand new park?</h2><p>Your whole park will be deleted!</p><div class="mrow"><button class="btn red" id="mYes">Yes, start over</button><button class="btn grey" id="mNo">No!</button></div>`); $('#mYes').onclick = () => { localStorage.removeItem(SAVE_KEY); location.reload(); }; $('#mNo').onclick = closeModal; };
 }
 function showRules() {
-  showModal(`<h2>📜 The Laws of FitzLandia Physics</h2><ul class="rules">
-    <li>⛓️ <b>Chain Lifts</b> and 🔼 <b>Conveyors</b> pull cars up slowly. Everything else is <b>gravity</b>!</li>
-    <li>⬇️ Going <b>down</b> makes you faster. Going <b>up</b> makes you slower. A hill can only be climbed if you have enough speed from a taller hill before it.</li>
-    <li>🌀 <b>Turns</b> have a speed limit of <b>${PHYS.turnMax}</b>. 🏎️ <b>Banked turns</b> lean into the curve and allow <b>${PIECES.bankleft.turnMax}</b>.</li>
-    <li>🛑 <b>Brakes</b> slow the cars down to <b>${PIECES.brake.brake}</b>. 🚀 <b>Boosters</b> speed them up to <b>${PIECES.booster.boost}</b>. 🐫 <b>Bumps</b> give a little hop and scrub off a bit of speed.</li>
-    <li>➰ <b>Loops</b> need speed <b>${PIECES.loop.minSpeed}</b> going in, 🌪️ <b>Corkscrews</b> need <b>${PIECES.corkscrew.minSpeed}</b>. Put a big drop right before them!</li>
-    <li>🏁 The track must make a <b>loop</b> back to the Station.</li>
-    <li>💦 Water rides: water only flows <b>downhill</b>. Splash Pools must be on the ground.</li>
-    <li>🐢 Friction slowly steals speed, so a long flat track will stop. Keep it moving!</li>
-    <li>⭐ More height, bigger drops, more turns and more hills = more <b>stars</b>. Every star lets <b>6 more guests</b> into the park!</li>
+  showModal(`<h2>📜 How rides work in FitzLandia</h2><ul class="rules">
+    <li>⛓️ <b>Chain Lifts</b> and 🔼 <b>Conveyors</b> pull the cars up slowly. After that, the cars roll all by themselves!</li>
+    <li>⬇️ Going <b>down</b> makes the cars faster. Going <b>up</b> makes them slower. The cars can only climb a hill if they got enough speed from a taller hill before it.</li>
+    <li>🌀 Flat <b>turns</b> are OK up to speed <b>${PHYS.turnMax}</b>. Faster than that and the cars fly off! 🏎️ <b>Banked turns</b> lean into the curve, so they are OK up to <b>${PIECES.bankleft.turnMax}</b>.</li>
+    <li>🛑 <b>Brakes</b> slow the cars down to <b>${PIECES.brake.brake}</b>. 🚀 <b>Boosters</b> push them up to <b>${PIECES.booster.boost}</b>. 🐫 <b>Bumps</b> give a little hop.</li>
+    <li>➰ A <b>Loop</b> needs speed <b>${PIECES.loop.minSpeed}</b> going in. 🌪️ A <b>Corkscrew</b> needs <b>${PIECES.corkscrew.minSpeed}</b>. Put a big drop right before them!</li>
+    <li>🏁 The track has to come all the way back to the <b>Station</b>.</li>
+    <li>💦 Water only flows <b>downhill</b>. Use a Conveyor to go up. Splash Pools go on the ground.</li>
+    <li>🐢 Cars slowly lose speed on flat track (wheels rubbing = friction). Keep them moving with hills!</li>
+    <li>⭐ Taller hills, bigger drops, loops, and more turns = more <b>stars</b>. Every star lets <b>6 more guests</b> into the park!</li>
   </ul><div class="mrow"><button class="btn grey" onclick="closeModal()">Got it!</button></div>`);
 }
 function showHelp() {

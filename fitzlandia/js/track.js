@@ -239,7 +239,7 @@ class Ride {
     disposeObject(this.group); this.group = new THREE.Group(); this.group.userData.ride = this;
     const path = this.buildPath(); const F = path.frames; const closed = path.closed;
     const col = this.color;
-    const mat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.45, metalness: 0.3 });
+    const mat = glow(new THREE.MeshStandardMaterial({ color: col, roughness: 0.45, metalness: 0.3 }), col, 0.9);
     const steel = new THREE.MeshStandardMaterial({ color: 0xb9c2cc, roughness: 0.5, metalness: 0.6 });
     if (!this.water) {
       const rail = 0.14;
@@ -377,10 +377,11 @@ function buildStationMesh(ride) {
   for (const side of [-1, 1]) {
     const plat = new THREE.Mesh(new THREE.BoxGeometry(CELL, 0.5, 1.2), platMat); plat.position.set(0, 0.25, side * 1.6); plat.receiveShadow = true; plat.castShadow = true; g.add(plat);
   }
-  const postMat = new THREE.MeshStandardMaterial({ color: ride.color, roughness: 0.5 });
+  const postMat = glow(new THREE.MeshStandardMaterial({ color: ride.color, roughness: 0.5 }), ride.color, 0.8);
+  addNightLight(g, 0, 3.8, 0, 0xfff0c0, 2.2, 14);
   for (const x of [-1.6, 1.6]) for (const z of [-2.0, 2.0]) { const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 4, 8), postMat); post.position.set(x, 2, z); g.add(post); }
   const roof = new THREE.Mesh(new THREE.BoxGeometry(CELL + 0.6, 0.3, 5), new THREE.MeshStandardMaterial({ map: stripeTexture(ride.water ? '#3fb4ff' : '#' + new THREE.Color(ride.color).getHexString(), '#ffffff'), roughness: 0.7 }));
-  roof.position.y = 4.1; roof.castShadow = true; g.add(roof);
+  glow(roof.material, ride.color, 0.35); roof.position.y = 4.1; roof.castShadow = true; g.add(roof);
   const signTex = textTexture((ride.water ? '🌊 ' : '🎢 ') + ride.name, { bg: '#ffffff', color: '#222', border: '#' + new THREE.Color(ride.color).getHexString(), size: 56, w: 640, h: 128 });
   const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.4, 0.9), new THREE.MeshBasicMaterial({ map: signTex, side: THREE.DoubleSide }));
   sign.position.set(0, 4.75, 0); g.add(sign);
@@ -394,7 +395,7 @@ function buildStationMesh(ride) {
 function makeVehicle(ride) {
   const g = new THREE.Group(); const cars = [];
   const seatsPerCar = ride.water ? 4 : 2, carCount = ride.water ? 1 : 3, spacing = ride.water ? 0 : 2.1;
-  const bodyMat = new THREE.MeshStandardMaterial({ color: ride.water ? 0x8b5a2b : ride.color, roughness: 0.4, metalness: 0.2 });
+  const bodyMat = glow(new THREE.MeshStandardMaterial({ color: ride.water ? 0x8b5a2b : ride.color, roughness: 0.4, metalness: 0.2 }), ride.water ? 0xffd080 : ride.color, 0.6);
   const seatMat = new THREE.MeshStandardMaterial({ color: 0x222831, roughness: 0.8 });
   for (let i = 0; i < carCount; i++) {
     const car = new THREE.Group();

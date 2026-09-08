@@ -14,7 +14,7 @@ const World = {
   parkCells: 20,
   parkGroup: null, grid: null, fence: null, gate: null, grass: null,
   city: null, road: null, clouds: [], cars: [], balloons: [], animated: [], stars: null, moon: null,
-  night: 0, nightTarget: 0, sunSprite: null, skyMat: null, hemi: null,
+  night: 0, nightTarget: 0, sunSprite: null, skyMat: null, hemi: null, glowMats: new Set(), nightLights: new Set(),
   cam: { target: new THREE.Vector3(0, 0, 0), az: 0.7, pol: 0.95, dist: 60 },
   rideCam: null,        // {ride, vehicle} when following a vehicle
   sun: null,
@@ -197,8 +197,9 @@ function mergedBoxes(boxes) {
 
 function disposeObject(obj) {
   obj.traverse(o => {
+    if (o.isLight) World.nightLights.delete(o);
     if (o.geometry) o.geometry.dispose();
-    if (o.material) { const ms = Array.isArray(o.material) ? o.material : [o.material]; ms.forEach(m => { if (m.map) m.map.dispose(); m.dispose(); }); }
+    if (o.material) { const ms = Array.isArray(o.material) ? o.material : [o.material]; ms.forEach(m => { World.glowMats.delete(m); if (m.map) m.map.dispose(); m.dispose(); }); }
   });
   if (obj.parent) obj.parent.remove(obj);
 }
@@ -432,6 +433,7 @@ function rebuildPark() {
   const signFace = new THREE.Mesh(new THREE.PlaneGeometry(gw * 2 + 2.6, 2.2), new THREE.MeshBasicMaterial({ map: signTex }));
   signFace.position.set(0, 6.8, half + 0.32); gate.add(signFace);
   const signBack = signFace.clone(); signBack.position.z = half - 0.32; signBack.rotation.y = Math.PI; gate.add(signBack);
+  for (const sx of [-1, 1]) addNightLight(gate, sx * (gw + 0.5), 8.5, half + 1, 0xffe0a0, 2.5, 20);
   g.add(gate); World.gate = gate;
   // build grid overlay
   const grid = new THREE.GridHelper(size, World.parkCells, 0xffffff, 0xffffff);
@@ -440,7 +442,7 @@ function rebuildPark() {
   // shadow camera covers park
   const sc = World.sun.shadow.camera; const ext = half + 12; sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext; sc.updateProjectionMatrix();
   // lamp posts along the main path
-  const lampMat = new THREE.MeshStandardMaterial({ color: 0x37474f }); const bulbMat = new THREE.MeshStandardMaterial({ color: 0xfff1b0, emissive: 0xffe08a, emissiveIntensity: 0.2 });
+  const lampMat = new THREE.MeshStandardMaterial({ color: 0x37474f }); const bulbMat = glow(new THREE.MeshStandardMaterial({ color: 0xfff1b0 }), 0xffe08a, 2.5);
   World.pathLamps = [];
   for (let z = -half + CELL * 2; z < half - CELL; z += CELL * 3) for (const x of [-CELL * 1.1, CELL * 1.1]) {
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 3.2, 6), lampMat); pole.position.set(x, 1.6, z); g.add(pole);
@@ -453,6 +455,17 @@ function rebuildPark() {
 }
 
 // ---------- day / night ----------
+/** Mark a material to glow in its colour at night. */
+function glow(mat, color, k = 0.8) {
+  mat.userData.glow = { color: new THREE.Color(color), k }; World.glowMats.add(mat);
+  mat.emissive.copy(mat.userData.glow.color); mat.emissiveIntensity = World.night * k; return mat;
+}
+/** Add a real point light that only shines at night (capped so the iPad stays fast). */
+function addNightLight(parent, x, y, z, color, power = 2, dist = 14) {
+  if (World.nightLights.size >= 16) return null;
+  const l = new THREE.PointLight(color, World.night * power, dist, 2); l.position.set(x, y, z); l.userData.nightPower = power;
+  parent.add(l); World.nightLights.add(l); return l;
+}
 const _cA = new THREE.Color(), _cB = new THREE.Color();
 function setNight(on) { World.nightTarget = on ? 1 : 0; }
 function updateDayNight(dt) {
@@ -460,14 +473,15 @@ function updateDayNight(dt) {
   w.night += Math.sign(w.nightTarget - w.night) * Math.min(Math.abs(w.nightTarget - w.night), dt * 0.35);
   const n = w.night;
   w.scene.background.copy(_cA.set(0x8ed0ff).lerp(_cB.set(0x070b1e), n));
-  w.scene.fog.color.copy(_cA.set(0xbfe3ff).lerp(_cB.set(0x0b1028), n));
-  w.sun.intensity = 1.7 - n * 1.5; w.sun.color.copy(_cA.set(0xfff1d6).lerp(_cB.set(0x9fb0ff), n));
-  w.hemi.intensity = 0.75 - n * 0.45; w.hemi.color.copy(_cA.set(0xcfe9ff).lerp(_cB.set(0x2a3560), n));
+  w.scene.fog.color.copy(_cA.set(0xbfe3ff).lerp(_cB.set(0x111c38), n));
+  w.sun.intensity = 1.7 - n * 0.95; w.sun.color.copy(_cA.set(0xfff1d6).lerp(_cB.set(0x9fb0ff), n));
+  w.hemi.intensity = 0.75 - n * 0.2; w.hemi.color.copy(_cA.set(0xcfe9ff).lerp(_cB.set(0x4a5a9a), n)); w.hemi.groundColor.copy(_cA.set(0x5c8f3a).lerp(_cB.set(0x1e3020), n));
   const u = w.skyMat.uniforms; u.top.value.copy(_cA.set(0x3d8fe8).lerp(_cB.set(0x03040f), n)); u.mid.value.copy(_cA.set(0x8ed0ff).lerp(_cB.set(0x0b1230), n)); u.bot.value.copy(_cA.set(0xe6f4ff).lerp(_cB.set(0x2a2450), n));
   w.sunSprite.material.opacity = 1 - n; w.moon.material.opacity = n; w.stars.material.opacity = n;
   if (w.city) w.city.children.forEach(m => { m.material.emissiveIntensity = 0.9 + n * 1.8; });
-  if (w.lampMat) w.lampMat.emissiveIntensity = 0.2 + n * 2.5;
-  w.renderer.toneMappingExposure = 1.05 - n * 0.15;
+  w.renderer.toneMappingExposure = 1.05;
+  for (const m of w.glowMats) m.emissiveIntensity = n * m.userData.glow.k;
+  for (const l of w.nightLights) l.intensity = n * l.userData.nightPower;
 }
 
 // ---------- camera ----------
